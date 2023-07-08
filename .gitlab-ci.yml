@@ -1,0 +1,10 @@
+stages:
+  - format
+
+cargo-fmt:
+  stage: format
+  script:
+    - cd kernel && cargo fmt
+    - cd crates/fat32 && cargo fmt
+    - cd crates/libd && cargo fmt
+    - cd crates/sync_cell && cargo fmt
