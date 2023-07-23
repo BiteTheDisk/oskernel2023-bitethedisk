@@ -11,7 +11,7 @@ use alloc::{
     vec::Vec,
 };
 use fat32::{root, Dir as FatDir, FileSystem, VirFile, VirFileType, ATTR_DIRECTORY};
-use nix::Timespec;
+use nix::TimeSpec;
 use spin::Mutex;
 
 /// 表示进程中一个被打开的常规文件或目录
@@ -458,7 +458,7 @@ impl File for Fat32File {
         base
     }
 
-    fn set_time(&self, timespec: &Timespec) {
+    fn set_time(&self, timespec: &TimeSpec) {
         let tv_sec = timespec.tv_sec;
         let tv_nsec = timespec.tv_nsec;
 

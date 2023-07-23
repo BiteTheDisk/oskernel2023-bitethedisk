@@ -17,7 +17,7 @@ use alloc::string::ToString;
 use alloc::{sync::Arc, vec::Vec};
 use core::mem::size_of;
 use fat32::sync_all;
-use nix::{TimeVal, Timespec};
+use nix::{TimeSpec, TimeVal};
 use spin::RwLock;
 
 use super::*;
@@ -1197,7 +1197,7 @@ pub fn sys_utimensat(
                         .pop()
                         .unwrap();
                 let addr = timespec_buf.as_ptr() as *const _ as usize;
-                let timespec = unsafe { &*(addr as *const Timespec) };
+                let timespec = unsafe { &*(addr as *const TimeSpec) };
                 file.set_time(timespec);
                 Ok(0)
             } else {
