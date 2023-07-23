@@ -4,7 +4,7 @@
 
 use crate::{consts::CLOCK_FREQ, sbi::set_timer};
 use core::ops::{Add, Sub};
-use nix::TimeVal;
+use nix::{TimeSpec, TimeVal};
 use riscv::register::time;
 
 pub const TICKS_PER_SEC: usize = 100;
@@ -41,6 +41,16 @@ pub fn get_timeval() -> TimeVal {
     let sec = ticks / CLOCK_FREQ;
     let usec = (ticks % CLOCK_FREQ) * USEC_PER_SEC / CLOCK_FREQ;
     TimeVal { sec, usec }
+}
+
+pub fn get_timesepc() -> TimeSpec {
+    let ticks = get_time();
+    let sec = ticks / CLOCK_FREQ;
+    let nsec = (ticks % CLOCK_FREQ) * NSEC_PER_SEC / CLOCK_FREQ;
+    TimeSpec {
+        tv_nsec: nsec as u64,
+        tv_sec: sec as u64,
+    }
 }
 
 /// 设置下次触发时钟中断的时间
