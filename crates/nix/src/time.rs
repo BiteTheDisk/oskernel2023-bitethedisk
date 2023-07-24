@@ -75,7 +75,7 @@ impl TimeVal {
         Self { sec, usec }
     }
 
-    pub fn into_ticks(self) -> usize {
+    pub fn into_ticks(&self) -> usize {
         self.sec * TICKS_PER_SEC + self.usec / USEC_PER_SEC * TICKS_PER_SEC
     }
 }
@@ -120,7 +120,7 @@ impl TimeSpec {
         }
     }
 
-    pub fn into_ticks(self) -> usize {
+    pub fn into_ticks(&self) -> usize {
         self.tv_sec as usize * TICKS_PER_SEC + self.tv_nsec as usize / NSEC_PER_SEC * TICKS_PER_SEC
     }
 }
