@@ -187,7 +187,7 @@ pub fn sys_mprotect(addr: usize, length: usize, prot: usize) -> Result<isize> {
                 continue;
             }
             let va: VirtAddr = vpn.into();
-            return Err(SyscallError::InvalidVirtAddress(-1, va));
+            return Err(Errno::EFAULT);
         }
     }
 
