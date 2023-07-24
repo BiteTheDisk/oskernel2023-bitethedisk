@@ -9,18 +9,21 @@ use crate::fs::file::File;
 use crate::mm::frame_allocator::enquire_refcount;
 use crate::mm::page_table::PTEFlags;
 use crate::mm::{
-    alloc_frame, FrameTracker, PageTable, PageTableEntry, PhysAddr, PhysPageNum, VirtAddr,
-    VirtPageNum,
+    alloc_frame, FrameTracker, MmapManager, PageTable, PageTableEntry, PhysAddr, PhysPageNum,
+    VirtAddr, VirtPageNum,
 };
 use alloc::collections::BTreeMap;
 use alloc::{sync::Arc, vec::Vec};
 
+use crate::fs::open_flags::CreateMode;
+use crate::fs::{open, AbsolutePath, OpenFlags};
 use crate::mm::shared_memory::{
     shm_get_address_and_size, shm_get_nattch, SharedMemoryArea, SharedMemoryTracker,
 };
 pub const MMAP_BASE: usize = 0x60000000;
 pub const MMAP_END: usize = 0x68000000; // mmap 区大小为 128 MiB
 pub const SHM_BASE: usize = 0x70000000;
+pub const LINK_BASE: usize = 0x20000000;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AuxEntry(pub usize, pub usize);
@@ -97,7 +100,7 @@ pub struct MemorySet {
 
     vm_areas: Vec<VmArea>,
 
-    mmap_areas: Vec<VmArea>,
+    pub mmap_manager: MmapManager,
 
     heap_areas: VmArea,
 
@@ -124,7 +127,7 @@ impl MemorySet {
                 None,
                 0,
             ),
-            mmap_areas: Vec::new(),
+            mmap_manager: MmapManager::new(VirtAddr::from(MMAP_BASE), VirtAddr::from(MMAP_BASE)),
             shm_areas: Vec::new(),
             shm_trackers: BTreeMap::new(),
             shm_top: SHM_BASE,
@@ -151,18 +154,6 @@ impl MemorySet {
         );
     }
 
-    pub fn remove_mmap_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
-        if let Some((idx, mmap_area)) = self
-            .mmap_areas
-            .iter_mut()
-            .enumerate()
-            .find(|(_, area)| area.vpn_range.get_start() == start_vpn)
-        {
-            mmap_area.erase_pagetable(&mut self.page_table);
-            self.mmap_areas.remove(idx);
-        }
-    }
-
     /// 通过起始虚拟页号删除对应的逻辑段（包括连续逻辑段和离散逻辑段）
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         if let Some((idx, vm_area)) = self
@@ -174,63 +165,6 @@ impl MemorySet {
             vm_area.erase_pagetable(&mut self.page_table);
             self.vm_areas.remove(idx);
         }
-    }
-
-    pub fn remove_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) {
-        // println!("[DEBUG] remove area 0x{:x?},0x{:0x?}", start_va, end_va);
-        let mut op = |areas: &mut Vec<VmArea>| {
-            let mut len = areas.len();
-            let mut idx = 0;
-            let start_vpn = start_va.floor();
-            let end_vpn = end_va.ceil();
-            let mut finish = false;
-
-            while idx < len {
-                let area = &mut areas[idx];
-                let area_start_vpn = area.start_vpn();
-                let area_end_vpn = area.end_vpn();
-                let mut area_remove;
-                if start_vpn > area_start_vpn && area_end_vpn > end_vpn {
-                    // area_start_vpn < start_vpn < end_vpn < area_end_vpn
-                    let front = area.split_left_pop(start_vpn, area.permission);
-                    let end = area.split_right_pop(end_vpn, area.permission);
-                    area_remove = areas.remove(idx);
-                    areas.push(front);
-                    areas.push(end);
-                    finish = true;
-                } else if area_start_vpn >= start_vpn
-                    && area_start_vpn < end_vpn
-                    && area_end_vpn >= end_vpn
-                {
-                    // start_vpn <= area_start_vpn < end_vpn <= area_end_vpn
-                    area_remove = area.split_left_pop(end_vpn, area.permission);
-                    idx += 1;
-                } else if area_start_vpn <= start_vpn
-                    && area_end_vpn > start_vpn
-                    && area_end_vpn <= end_vpn
-                {
-                    // area_start_vpn <= start_vpn < area_end_vpn <= end_vpn
-                    area_remove = area.split_right_pop(start_vpn, area.permission);
-                    idx += 1;
-                } else if area_start_vpn >= start_vpn && area_end_vpn <= end_vpn {
-                    // start_vpn <= area_start_vpn < area_end_vpn <= end_vpn
-                    area_remove = areas.remove(idx);
-                    len -= 1;
-                } else {
-                    idx += 1;
-                    continue;
-                }
-
-                area_remove.write_back(&mut self.page_table).unwrap();
-                area_remove.erase_pagetable(&mut self.page_table);
-
-                if finish {
-                    return;
-                }
-            }
-        };
-
-        op(&mut self.mmap_areas);
     }
 
     /// 在当前地址空间插入一个新的连续逻辑段
@@ -367,13 +301,19 @@ impl MemorySet {
 
         // 记录目前涉及到的最大的虚拟地址
         let mut brk_start_va = VirtAddr(0);
-
+        let mut dynamic_link = false;
+        let mut entry_point = elf.header.pt2.entry_point() as usize;
         // 遍历程序段进行加载
         for i in 0..ph_count as u16 {
             let ph = elf.program_header(i).unwrap();
-            // let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
-            // let end_va: VirtAddr = ((ph.virtual_addr() + ph.mem_size()) as usize).into();
-            // println!("[DEBUG] start:0x{:x?},end:0x{:x?},type:{:?}",start_va,end_va,ph.get_type().unwrap());
+            let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
+            let end_va: VirtAddr = ((ph.virtual_addr() + ph.mem_size()) as usize).into();
+            // println!(
+            //     "[DEBUG] start:0x{:x?},end:0x{:x?},type:{:?}",
+            //     start_va,
+            //     end_va,
+            //     ph.get_type().unwrap()
+            // );
             match ph.get_type().unwrap() {
                 xmas_elf::program::Type::Load => {
                     let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
@@ -415,10 +355,70 @@ impl MemorySet {
                     // auxs.push(AuxEntry(AT_PHDR, ph.virtual_addr() as usize));
                 }
                 xmas_elf::program::Type::Interp => {
-                    println!("elf Interp");
+                    // println!("elf Interp");
+                    dynamic_link = true;
                 }
-                _ => continue,
+                _ => {
+                    let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
+                    let end_va: VirtAddr = ((ph.virtual_addr() + ph.mem_size()) as usize).into();
+                    // println!(
+                    //     "TYPE:{:?} start_va:{:?} end_va{:?}",
+                    //     ph.get_type().unwrap(),
+                    //     start_va,
+                    //     end_va
+                    // );
+                }
             }
+        }
+        if dynamic_link {
+            let path = AbsolutePath::from_str("/libc.so");
+            let interpreter_file = open(path, OpenFlags::O_RDONLY, CreateMode::empty())
+                .expect("can't find interpreter file");
+            // 第一次读取前64字节确定程序表的位置与大小
+            let interpreter_head_data = interpreter_file.read_to_vec(0, 64);
+            let interp_elf = xmas_elf::ElfFile::new(interpreter_head_data.as_slice()).unwrap();
+
+            let ph_entry_size = interp_elf.header.pt2.ph_entry_size() as usize;
+            let ph_offset = interp_elf.header.pt2.ph_offset() as usize;
+            let ph_count = interp_elf.header.pt2.ph_count() as usize;
+
+            // 进行第二次读取，这样的elf对象才能正确解析程序段头的信息
+            let interpreter_head_data =
+                interpreter_file.read_to_vec(0, ph_offset + ph_count * ph_entry_size);
+            let interp_elf = xmas_elf::ElfFile::new(interpreter_head_data.as_slice()).unwrap();
+            auxs.push(AuxEntry(AT_BASE, LINK_BASE));
+            entry_point = LINK_BASE + interp_elf.header.pt2.entry_point() as usize;
+            // 获取 program header 的数目
+            let ph_count = interp_elf.header.pt2.ph_count();
+            for i in 0..ph_count {
+                let ph = interp_elf.program_header(i).unwrap();
+                if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
+                    let start_va: VirtAddr = (ph.virtual_addr() as usize + LINK_BASE).into();
+                    let end_va: VirtAddr =
+                        (ph.virtual_addr() as usize + ph.mem_size() as usize + LINK_BASE).into();
+                    // println!("DYNAMIC LOAD start_va:{:x?},end_va:{:x?}", start_va, end_va);
+                    let map_perm =
+                        MapPermission::U | MapPermission::R | MapPermission::W | MapPermission::X;
+                    let map_area = VmArea::new(
+                        start_va,
+                        end_va,
+                        MapType::Framed,
+                        map_perm,
+                        Some(interpreter_file.clone()),
+                        0,
+                    );
+                    memory_set.insert(
+                        map_area,
+                        Some((
+                            ph.offset() as usize,
+                            ph.file_size() as usize,
+                            start_va.page_offset(),
+                        )),
+                    );
+                }
+            }
+        } else {
+            auxs.push(AuxEntry(AT_BASE, 0));
         }
         let user_stack_top = TRAP_CONTEXT - PAGE_SIZE;
         let user_stack_bottom = user_stack_top - USER_STACK_SIZE;
@@ -492,7 +492,7 @@ impl MemorySet {
         LoadedELF {
             memory_set,
             user_stack_top,
-            elf_entry: elf.header.pt2.entry_point() as usize,
+            elf_entry: entry_point,
             auxs,
         }
     }
@@ -550,15 +550,15 @@ impl MemorySet {
                 new_memory_set.push_mapped_area(new_area);
             }
         }
-        for mmap_area in user_space.mmap_areas.iter() {
-            let mut new_mmap_area = VmArea::from_another(mmap_area);
-
-            for vpn in mmap_area.vpn_range.into_iter() {
-                // change the map permission of both pagetable
-                // get the former flags and ppn
-
-                // 只对已经map过的进行cow
+        new_memory_set.mmap_manager = user_space.mmap_manager.clone();
+        for (vpn, mmap_page) in user_space.mmap_manager.mmap_map.iter() {
+            if (mmap_page.valid) {
+                let vpn = vpn.clone();
                 if let Some(pte) = parent_page_table.translate(vpn) {
+                    // change the map permission of both pagetable
+                    // get the former flags and ppn
+
+                    // 只对已经map过的进行cow
                     let pte_flags = pte.flags() & !PTEFlags::W;
                     let src_ppn = pte.ppn();
                     // frame_add_ref(src_ppn);
@@ -568,14 +568,8 @@ impl MemorySet {
                     // map the cow page table to src_ppn
                     new_memory_set.page_table.map(vpn, src_ppn, pte_flags);
                     new_memory_set.page_table.set_cow(vpn);
-
-                    // () 删除了 push vpn (删了vec_table, 只保留了vpn range)
-                    new_mmap_area
-                        .frame_map
-                        .insert(vpn, FrameTracker::from_ppn(src_ppn));
                 }
             }
-            new_memory_set.mmap_areas.push(new_mmap_area);
         }
 
         new_memory_set.heap_areas = VmArea::from_another(&user_space.heap_areas);
@@ -660,13 +654,11 @@ impl MemorySet {
                 return 0;
             }
         }
-        for mmap_area in self.mmap_areas.iter_mut() {
-            let head_vpn = mmap_area.vpn_range.get_start();
-            let tail_vpn = mmap_area.vpn_range.get_end();
-            if vpn < tail_vpn && vpn >= head_vpn {
-                mmap_area.frame_map.insert(vpn, frame);
-                return 0;
-            }
+        if vpn >= VirtPageNum::from(self.mmap_manager.mmap_start)
+            && vpn < VirtPageNum::from(self.mmap_manager.mmap_top)
+        {
+            self.mmap_manager.frame_trackers.insert(vpn, frame);
+            return 0;
         }
         let head_vpn = self.heap_areas.vpn_range.get_start();
         let tail_vpn = self.heap_areas.vpn_range.get_end();
@@ -679,19 +671,6 @@ impl MemorySet {
 
     fn remap_cow(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, former_ppn: PhysPageNum) {
         self.page_table.remap_cow(vpn, ppn, former_ppn);
-    }
-
-    /// 为mmap缺页分配空页表
-    pub fn lazy_mmap(&mut self, stval: VirtAddr) -> isize {
-        for mmap_area in self.mmap_areas.iter_mut() {
-            if stval >= mmap_area.vpn_range.get_start().into()
-                && stval < mmap_area.vpn_range.get_end().into()
-            {
-                mmap_area.lazy_map_vpn(stval.floor(), &mut self.page_table);
-                return 0;
-            }
-        }
-        -1
     }
 
     pub fn lazy_alloc_heap(&mut self, vpn: VirtPageNum) -> isize {
@@ -724,16 +703,6 @@ impl MemorySet {
     /// - 留空：
     ///     - vpn_table
     ///     - data_frames
-    pub fn insert_mmap_area(
-        &mut self,
-        start_va: VirtAddr,
-        end_va: VirtAddr,
-        permission: MapPermission,
-    ) {
-        let new_mmap_area = VmArea::new(start_va, end_va, MapType::Framed, permission, None, 0);
-
-        self.mmap_areas.push(new_mmap_area);
-    }
 
     pub fn check_va_range(&self, start_va: VirtAddr, len: usize) -> bool {
         let end_va = VirtAddr::from(start_va.0 + len);
@@ -744,13 +713,10 @@ impl MemorySet {
                 return true;
             }
         }
-        for mmap_area in self.mmap_areas.iter() {
-            if mmap_area.vpn_range.get_start() <= start_va.floor()
-                && end_va.ceil() <= mmap_area.vpn_range.get_end()
-            {
-                return true;
-            }
+        if self.mmap_manager.mmap_start <= start_va && end_va < self.mmap_manager.mmap_top {
+            return true;
         }
+
         if self.heap_areas.vpn_range.get_start() <= start_va.floor()
             && end_va.ceil() <= self.heap_areas.vpn_range.get_end()
         {
@@ -805,6 +771,19 @@ impl MemorySet {
         let vpn: VirtPageNum = start_va.into();
         self.shm_areas.retain(|x| x.start_vpn() != vpn);
         shm_get_nattch(key)
+    }
+    pub fn lazy_mmap(&mut self, vpn: VirtPageNum) {
+        if let Some(frame) = alloc_frame() {
+            let ppn = frame.ppn;
+            self.mmap_manager.frame_trackers.insert(vpn, frame);
+            let mmap_page = self.mmap_manager.mmap_map.get_mut(&vpn).unwrap();
+            let pte_flags = PTEFlags::from_bits((mmap_page.prot.bits() << 1 & 0xf) as u16).unwrap();
+            let pte_flags = pte_flags | PTEFlags::U;
+            self.page_table.map(vpn, ppn, pte_flags);
+            mmap_page.lazy_map_page(self.page_table.token());
+        } else {
+            panic!("No more memory!");
+        }
     }
 }
 

@@ -10,11 +10,12 @@ use riscv::register::{
 
 use crate::{
     consts::TRAMPOLINE,
+    mm::translated_mut,
     mm::VirtAddr,
     syscall::dispatcher::syscall,
     task::{
-        current_add_signal, current_task, current_trap_cx, suspend_current_and_run_next,
-        SignalFlags,
+        current_add_signal, current_task, current_trap_cx, current_user_token,
+        suspend_current_and_run_next, SignalFlags,
     },
     timer::{get_timeval, set_next_trigger},
 };
@@ -107,10 +108,11 @@ pub fn user_trap_handler() -> ! {
             debug!("user_trap_handler: lazy mapping, task: {:?}", task.pid());
 
             let lazy = task.check_lazy(va, is_load);
-
             if lazy != 0 {
+                println!("LAZY FAIL {:?}", lazy);
                 current_add_signal(SignalFlags::SIGSEGV);
             }
+            // println!("TRAP END");
         }
 
         Trap::Exception(Exception::InstructionFault)
