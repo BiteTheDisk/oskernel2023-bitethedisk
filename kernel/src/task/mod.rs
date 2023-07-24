@@ -14,7 +14,7 @@ use manager::remove_from_pid2task;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
-pub use manager::{add_task, check_hanging, pid2task};
+pub use manager::{add_task, check_hanging, pid2task, unblock_task};
 pub use pid::{pid_alloc, PidHandle};
 pub use processor::{
     current_task, current_trap_cx, current_user_token, schedule::*, take_current_task,
@@ -22,7 +22,11 @@ pub use processor::{
 pub use signals::*;
 pub use task::FD_LIMIT;
 
-use self::{initproc::INITPROC, processor::schedule};
+use self::{
+    initproc::INITPROC,
+    manager::block_task,
+    processor::{acquire_processor, schedule},
+};
 
 /// 将当前任务置为就绪态，放回到进程管理器中的就绪队列中，重新选择一个进程运行
 pub fn suspend_current_and_run_next() -> isize {
@@ -87,6 +91,34 @@ pub fn exit_current_and_run_next(exit_code: i32) {
     // 使用全0的上下文填充换出上下文，开启新一轮进程调度
     let mut _unused = TaskContext::empty();
     schedule(&mut _unused as *mut _);
+}
+
+pub fn hanging_current_and_run_next(sleep_time: usize, duration: usize) {
+    let task = current_task().unwrap();
+    let mut inner = task.write();
+    let current_cx_ptr = &mut inner.task_cx as *mut TaskContext;
+    inner.task_status = TaskStatus::Hanging;
+    drop(inner);
+    drop(task);
+    acquire_processor().hang_current(sleep_time, duration);
+    schedule(current_cx_ptr);
+}
+
+pub fn block_current_and_run_next() {
+    let task = current_task().unwrap();
+
+    // ---- access current TCB exclusively
+    let mut task_inner = task.write();
+    let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
+    // Change status to Ready
+    task_inner.task_status = TaskStatus::Blocking;
+    block_task(task.clone());
+
+    drop(task_inner);
+    drop(task);
+
+    // jump to scheduling cycle
+    schedule(task_cx_ptr);
 }
 
 /// 将初始进程 `initproc` 加入任务管理器
