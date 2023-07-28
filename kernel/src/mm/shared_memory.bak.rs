@@ -1,6 +1,6 @@
 use super::address::PhysAddr;
 use crate::fs::open_flags::CreateMode;
-use crate::task::processor::current_task;
+use crate::task::current_task;
 use crate::timer::get_time;
 use alloc::{collections::BTreeMap, vec::Vec};
 
@@ -58,9 +58,7 @@ impl SharedMemoryManager {
         } else {
             key
         };
-        let task = current_task().unwrap();
-        let process = task.process.upgrade().unwrap();
-        let pid = process.pid.0;
+        let pid = current_task().unwrap().pid.0;
         let perm = CreateMode::from_bits((shmflags & 0o777) as u32).unwrap();
         let shmid_ds = SharedMemoryIdentifierDs {
             shm_perm: perm,
@@ -79,18 +77,14 @@ impl SharedMemoryManager {
         key
     }
     pub fn attach(&mut self, key: usize) {
-        let task = current_task().unwrap();
-        let process = task.process.upgrade().unwrap();
-        let pid = process.pid.0;
+        let pid = current_task().unwrap().pid.0;
         let shm_area = &mut self.shm_areas.get_mut(&key).unwrap();
         shm_area.shmid_ds.shm_atime = get_time();
         shm_area.shmid_ds.shm_lpid = pid;
         shm_area.shmid_ds.shm_nattch += 1;
     }
     pub fn detach(&mut self, key: usize) {
-        let task = current_task().unwrap();
-        let process = task.process.upgrade().unwrap();
-        let pid = process.pid.0;
+        let pid = current_task().unwrap().pid.0;
         let shm_area = &mut self.shm_areas.get_mut(&key).unwrap();
         shm_area.shmid_ds.shm_dtime = get_time();
         shm_area.shmid_ds.shm_lpid = pid;
