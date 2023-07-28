@@ -12,9 +12,9 @@ use alloc::sync::Arc;
 pub use processor::*;
 pub use schedule::*;
 
-use crate::trap::TrapContext;
+use crate::{mm::memory_set, trap::TrapContext};
 
-use super::{process::ProcessControlBlock, switch::__switch, task::TaskControlBlock, TaskContext};
+use super::{switch::__switch, task::TaskControlBlock, TaskContext};
 
 /// 从全局变量 `PROCESSOR` 中取出当前正在执行的任务
 pub fn take_current_task() -> Option<Arc<TaskControlBlock>> {
@@ -26,16 +26,10 @@ pub fn current_task() -> Option<Arc<TaskControlBlock>> {
     acquire_processor().current().clone()
 }
 
-#[inline(always)]
-pub fn current_process() -> Arc<ProcessControlBlock> {
-    current_task().unwrap().process.upgrade().unwrap()
-}
-
 /// 从全局变量 `PROCESSOR` 中取出当前正在执行任务的用户地址空间 token
 pub fn current_user_token() -> usize {
     let task = current_task().unwrap();
-    let process = task.process.upgrade().unwrap();
-    let memory_set = process.memory_set.read();
+    let memory_set = task.memory_set.read();
     let token = memory_set.token();
     drop(memory_set);
 
@@ -43,7 +37,7 @@ pub fn current_user_token() -> usize {
 }
 
 pub fn current_trap_cx() -> &'static mut TrapContext {
-    current_task().unwrap().inner_mut().trap_cx_mut()
+    current_task().unwrap().inner_mut().trap_context()
 }
 
 /// 换到 idle 控制流并开启新一轮的任务调度
@@ -53,14 +47,4 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     drop(processor);
 
     unsafe { __switch(switched_task_cx_ptr, idle_task_cx_ptr) }
-}
-
-pub fn current_trap_cx_user_va() -> usize {
-    current_task()
-        .unwrap()
-        .inner_ref()
-        .res
-        .as_ref()
-        .unwrap()
-        .trap_cx_user_va()
 }

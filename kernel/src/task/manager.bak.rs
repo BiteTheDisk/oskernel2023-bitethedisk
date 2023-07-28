@@ -1,12 +1,10 @@
-use crate::task::process::ProcessControlBlock;
 use crate::timer::get_time_ms;
 use sync_cell::SyncRefCell;
 
+use super::TaskControlBlock;
 use alloc::collections::{BTreeMap, BinaryHeap, VecDeque};
 use alloc::sync::Arc;
-use spin::RwLock;
-
-use super::task::TaskControlBlock;
+use spin::Mutex;
 
 /// FIFO 任务管理器
 pub struct TaskManager {
@@ -110,12 +108,13 @@ impl TaskManager {
 
 lazy_static! {
     pub static ref TASK_MANAGER: SyncRefCell<TaskManager> = SyncRefCell::new(TaskManager::new());
-    pub static ref PID2PCB: RwLock<BTreeMap<usize, Arc<ProcessControlBlock>>> =
-        unsafe { RwLock::new(BTreeMap::new()) };
+    pub static ref PID2TCB: Mutex<BTreeMap<usize, Arc<TaskControlBlock>>> =
+        Mutex::new(BTreeMap::new());
 }
 
 /// 将一个任务加入到全局 `FIFO 任务管理器` `TASK_MANAGER` 就绪队列的队尾
 pub fn add_task(task: Arc<TaskControlBlock>) {
+    PID2TCB.lock().insert(task.pid(), Arc::clone(&task));
     TASK_MANAGER.borrow_mut().add(task);
 }
 
@@ -151,17 +150,15 @@ pub fn block_task(task: Arc<TaskControlBlock>) {
     TASK_MANAGER.borrow_mut().block(task);
 }
 
-pub fn pid2process(pid: usize) -> Option<Arc<ProcessControlBlock>> {
-    let map = PID2PCB.read();
+/// 通过PID获取对应的进程控制块
+#[allow(unused)]
+pub fn pid2task(pid: usize) -> Option<Arc<TaskControlBlock>> {
+    let map = PID2TCB.lock();
     map.get(&pid).map(Arc::clone)
 }
 
-pub fn insert_into_pid2process(pid: usize, process: Arc<ProcessControlBlock>) {
-    PID2PCB.write().insert(pid, process);
-}
-
-pub fn remove_from_pid2process(pid: usize) {
-    let mut map = PID2PCB.write();
+pub fn remove_from_pid2task(pid: usize) {
+    let mut map = PID2TCB.lock();
     if map.remove(&pid).is_none() {
         panic!("cannot find pid {} in pid2task!", pid);
     }

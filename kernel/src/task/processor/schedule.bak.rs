@@ -7,10 +7,11 @@ use core::cell::RefMut;
 use alloc::sync::Arc;
 
 use crate::task::{
-    context::TaskContext,
-    manager::{check_hanging, check_interupt, fetch_task, unblock_task},
+    check_hanging,
+    manager::{check_interupt, fetch_task},
     switch::__switch,
-    task::{TaskControlBlock, TaskStatus},
+    task::TaskStatus,
+    unblock_task, TaskContext, TaskControlBlock,
 };
 
 use super::{acquire_processor, Processor};

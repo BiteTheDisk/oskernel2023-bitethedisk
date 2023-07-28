@@ -1,130 +1,103 @@
-use alloc::{sync::Arc, vec::Vec};
+pub mod context; // 任务上下文模块
+mod initproc;
+mod kernel_stack;
+mod manager; // 进程管理器
+mod pid; // 进程标识符模块
+pub mod processor; // 处理器管理模块
+mod signals;
+mod switch; // 任务上下文切换模块
+            // pub mod task;
+
+use core::usize;
+
+use alloc::sync::Arc;
+use fat32::sync_all;
+use manager::remove_from_pid2task;
+pub use task::{TaskControlBlock, TaskStatus};
+
+pub use context::TaskContext;
+pub use manager::{add_task, check_hanging, pid2task, unblock_task};
+pub use pid::{pid_alloc, PidHandle};
+pub use processor::{
+    current_task, current_trap_cx, current_user_token, schedule::*, take_current_task,
+};
+pub use signals::*;
+pub use task::FD_LIMIT;
 
 use crate::{
     consts::SIGNAL_TRAMPOLINE,
-    mm::translated_mut,
-    task::signals::{SAFlags, SigInfo, SignalContext, UContext},
+    mm::{memory_set, translated_mut},
 };
 
 use self::{
-    context::TaskContext,
     initproc::INITPROC,
-    manager::{add_task, block_task, remove_from_pid2process},
-    process::ProcessControlBlock,
-    processor::{acquire_processor, current_task, schedule, take_current_task},
-    signals::{SigMask, SigSet, Signal},
-    task::{TaskStatus, TaskUserRes},
+    manager::block_task,
+    processor::{acquire_processor, schedule},
 };
 
-pub mod context; // 任务上下文模块
-pub mod initproc;
-pub mod kernel_stack;
-pub mod manager; // 进程管理器
-pub mod pid; // 进程标识符模块
-pub mod process;
-pub mod processor; // 处理器管理模块
-pub mod signals;
-pub mod switch; // 任务上下文切换模块
-pub mod task;
-
 /// 将当前任务置为就绪态，放回到进程管理器中的就绪队列中，重新选择一个进程运行
-pub fn suspend_current_and_run_next() {
+pub fn suspend_current_and_run_next() -> isize {
     // 取出当前正在执行的任务
-    let task = current_task().unwrap();
-    let task_inner = task.inner_ref();
+    let task_cp = current_task().unwrap();
+    let mut task_inner = task_cp.inner_mut();
     if task_inner.pending_signals.contains(SigMask::SIGKILL) {
-        let exit_code = task_inner.exit_code.unwrap(); // SIGKILL(9)
+        let exit_code = task_inner.exit_code;
         drop(task_inner);
-        drop(task);
-        exit_current_and_run_next(exit_code, false);
-        panic!("Shouldn't reach here in `suspend_current_and_run_next`!")
+        drop(task_cp);
+        exit_current_and_run_next(exit_code);
+        return 0;
     }
-    drop(task_inner);
-
     let task = take_current_task().unwrap();
-    let mut task_inner = task.inner_mut();
     let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
 
     // 修改其进程控制块内的状态为就绪状态
     task_inner.task_status = TaskStatus::Ready;
     drop(task_inner);
 
-    // 将“add_task”延迟到调度完成（即切换到idle控制流）之后
-    // 若不这么做，该线程将自己挂到就绪队列，另一cpu核可能趁此机会取出该线程，并进入该线程的内核栈
-    // 从而引发错乱。
     // 将进程加入进程管理器中的就绪队列
     add_task(task);
 
     // 开启一轮新的调度
     schedule(task_cx_ptr);
+
+    0
 }
 
-pub fn exit_current_and_run_next(exit_code: i32, is_exit_group: bool) {
+pub fn exit_current_and_run_next(exit_code: i32) {
+    // 获取访问权限，修改进程状态
     let task = take_current_task().unwrap();
-    let process = task.process.upgrade().unwrap();
-    let mut task_inner = task.inner_mut();
-    let tid = task_inner.res.as_ref().unwrap().tid;
-    // record exit code
-    task_inner.exit_code = Some(exit_code);
-    // remove user task resource
-    task_inner.res = None;
-    // here we do not remove the thread since we are still using the kstack
-    drop(task_inner);
+    remove_from_pid2task(task.pid());
+    let mut inner = task.inner_mut();
+    // memory_set mut borrow
+    let mut ms_mut = task.memory_set.write();
+
+    inner.task_status = TaskStatus::Zombie; // 后续才能被父进程在 waitpid 系统调用的时候回收
+                                            // 记录退出码，后续父进程在 waitpid 的时候可以收集
+    inner.exit_code = exit_code;
+    // do not move to its parent but under initproc
+
+    if task.pid() == 0 {
+        sync_all();
+        panic!("initproc return!");
+    }
+
+    // 将这个进程的子进程转移到 initproc 进程的子进程中
+    let mut initproc_inner = INITPROC.inner_mut();
+    for child in inner.children.iter() {
+        child.inner_mut().parent = Some(Arc::downgrade(&INITPROC));
+        initproc_inner.children.push(child.clone()); // 引用计数 -1
+    }
+    drop(initproc_inner);
+
+    // 引用计数 +1
+    // 对于当前进程占用的资源进行早期回收
+    inner.children.clear();
+    ms_mut.recycle_data_pages();
+    drop(ms_mut);
+    drop(inner);
     drop(task);
 
-    // however, if this is the main thread of current process (tid == 0)
-    // the process should terminate at once
-    if tid == 0 || is_exit_group {
-        let pid = process.get_pid();
-        if pid == 0 {
-            // initproc
-            unimplemented!("initproc exit!")
-        }
-        remove_from_pid2process(pid);
-        let mut process_inner = process.inner_mut();
-        // record exit code of main process
-        process_inner.exit_code = Some(exit_code);
-
-        // move all child processes under init process
-        let mut initproc_inner = INITPROC.inner_mut();
-        for child in process_inner.children.iter() {
-            child.inner_mut().parent = Some(Arc::downgrade(&INITPROC));
-            initproc_inner.children.push(child.clone());
-        }
-        drop(initproc_inner);
-
-        // deallocate user res (including tid/trap_cx/ustack) of all threads
-        // it has to be done before we dealloc the whole memory_set
-        // otherwise they will be deallocated twice
-        let mut recycle_res = Vec::<TaskUserRes>::new();
-        for task in process_inner.tasks.iter().filter(|t| t.is_some()) {
-            let task = task.as_ref().unwrap();
-            let mut task_inner = task.inner_mut();
-            if let Some(res) = task_inner.res.take() {
-                recycle_res.push(res);
-            }
-        }
-        // dealloc_tid and dealloc_user_res require access to PCB inner, so we
-        // need to collect those user res first, then release process_inner
-        // for now to avoid deadlock/double borrow problem.
-        drop(process_inner);
-        recycle_res.clear();
-
-        let mut process_inner = process.inner_mut();
-        process_inner.children.clear();
-
-        // deallocate other data in user space i.e. program code/data section
-        let mut memory_set = process.memory_set.write();
-        memory_set.recycle_data_pages();
-        // drop file descriptors
-        drop(memory_set);
-
-        let mut fd_table = process.fd_table.write();
-        fd_table.clear();
-        drop(fd_table);
-    }
-    drop(process);
-    // we do not have to save task context
+    // 使用全0的上下文填充换出上下文，开启新一轮进程调度
     let mut _unused = TaskContext::empty();
     schedule(&mut _unused as *mut _);
 }
@@ -138,7 +111,6 @@ pub fn hanging_current_and_run_next(sleep_time: usize, duration: usize) {
     drop(task);
     acquire_processor().hang_current(sleep_time, duration);
     schedule(current_cx_ptr);
-    panic!("Shouldn't reach here in `exit_current_and_run_next`!")
 }
 
 pub fn block_current_and_run_next() {
@@ -160,12 +132,12 @@ pub fn block_current_and_run_next() {
 
 /// 将初始进程 `initproc` 加入任务管理器
 pub fn add_initproc() {
-    // add_task(INITPROC.clone());
-    let _initproc = INITPROC.clone();
+    add_task(INITPROC.clone());
 }
 
 pub fn exec_signal_handlers() {
     let task = current_task().unwrap();
+    let pid = task.pid();
     let mut task_inner = task.inner_mut();
 
     if task_inner.pending_signals == SigSet::empty() {
@@ -183,9 +155,7 @@ pub fn exec_signal_handlers() {
             None => return,
         };
         task_inner.pending_signals.sub(signum);
-
-        let process = task.process.upgrade().unwrap();
-        let sigaction = process.sigactions.read()[signum as usize];
+        let sigaction = task.sigactions.read()[signum as usize];
 
         // 如果信号对应的处理函数存在，则做好跳转到 handler 的准备
         let handler = sigaction.sa_handler;
@@ -196,9 +166,13 @@ pub fn exec_signal_handlers() {
             }
             SIG_DFL => {
                 if signum == Signal::SIGKILL as u32 || signum == Signal::SIGSEGV as u32 {
+                    println!(
+                        "[Kernel] task/mod(exec_signal_handlers) pid:{} signal_num:{}, SIG_DFL kill process",
+                        pid, signum
+                    );
                     drop(task_inner);
                     drop(task);
-                    exit_current_and_run_next(-(signum as i32), false);
+                    exit_current_and_run_next(-(signum as i32));
                 }
                 return;
             }
@@ -215,13 +189,13 @@ pub fn exec_signal_handlers() {
                 // 将信号掩码设置为 sigmask
                 task_inner.sigmask = sigmask;
                 // 将 SignalContext 数据放入栈中
-                let trap_cx = task_inner.trap_cx_mut();
+                let trap_cx = task_inner.trap_context();
                 // 保存 Trap 上下文与 old_sigmask 到 sig_context 中
                 let sig_context = SignalContext::from_another(trap_cx, old_sigmask);
                 trap_cx.x[10] = signum as usize; // a0 (args0 = signum)
                                                  // 如果 sa_flags 中包含 SA_SIGINFO，则将 siginfo 和 ucontext 放入栈中
 
-                let memory_set = process.memory_set.read();
+                let memory_set = task.memory_set.read();
                 let token = memory_set.token();
                 drop(memory_set);
 
@@ -249,7 +223,6 @@ pub fn exec_signal_handlers() {
                     trap_cx.sepc
                 );
                 trap_cx.sepc = handler; // sepc = handler
-                drop(task_inner);
                 return;
             }
         }
