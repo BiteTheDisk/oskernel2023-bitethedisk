@@ -147,9 +147,7 @@ impl File for Pipe {
                     return read_size;
                 }
                 drop(ring_buffer);
-                if suspend_current_and_run_next() < 0 {
-                    return read_size;
-                }
+                suspend_current_and_run_next();
                 continue;
             }
             // read at most loop_read bytes
@@ -175,9 +173,7 @@ impl File for Pipe {
             let loop_write = ring_buffer.available_write();
             if loop_write == 0 {
                 drop(ring_buffer);
-                if suspend_current_and_run_next() < 0 {
-                    return write_size;
-                }
+                suspend_current_and_run_next();
                 continue;
             }
 
@@ -215,9 +211,7 @@ impl File for Pipe {
                     return buf;
                 }
                 drop(ring_buffer);
-                if suspend_current_and_run_next() < 0 {
-                    return buf;
-                }
+                suspend_current_and_run_next();
                 continue;
             }
             for _ in 0..loop_read {
@@ -235,9 +229,7 @@ impl File for Pipe {
             let loop_write = ring_buffer.available_write();
             if loop_write == 0 {
                 drop(ring_buffer);
-                if suspend_current_and_run_next() < 0 {
-                    return write_size;
-                }
+                suspend_current_and_run_next();
                 continue;
             }
             for _ in 0..loop_write {
