@@ -1,6 +1,8 @@
 //! 根据 SYS_id 分发具体系统调用
 
-use crate::task::{current_task, SigAction};
+// use crate::task::{current_task, SigAction};
+
+use crate::task::signals::SigAction;
 
 use super::impls::*;
 use nix::time::TimeSpec;

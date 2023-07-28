@@ -2,7 +2,7 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use spin::RwLock;
 
-use crate::task::TaskControlBlock;
+use crate::task::task::TaskControlBlock;
 use crate::timer::get_time_us;
 
 pub struct FutexWaiter {

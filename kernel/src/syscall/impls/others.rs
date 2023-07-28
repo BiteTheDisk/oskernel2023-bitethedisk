@@ -1,10 +1,11 @@
 use nix::info::Utsname;
 use nix::{tms, TimeVal};
 
-use crate::task::hanging_current_and_run_next;
+use crate::task::processor::current_user_token;
+use crate::task::{hanging_current_and_run_next, suspend_current_and_run_next};
 use crate::{
     mm::{translated_bytes_buffer, translated_ref, UserBuffer},
-    task::{current_user_token, suspend_current_and_run_next},
+    // task::{current_user_token, suspend_current_and_run_next},
     timer::{get_time_ms, get_timeval},
 };
 

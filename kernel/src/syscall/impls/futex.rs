@@ -11,10 +11,13 @@ use crate::mm::translated_ref;
 
 use crate::syscall::errno;
 use crate::syscall::futex::{FutexQueue, FutexWaiter};
-use crate::task::{
-    block_current_and_run_next, current_task, current_user_token, suspend_current_and_run_next,
-    unblock_task, TaskControlBlock,
-};
+use crate::task::block_current_and_run_next;
+use crate::task::manager::unblock_task;
+use crate::task::processor::{current_task, current_user_token};
+// use crate::task::{
+//     block_current_and_run_next, current_task, current_user_token, suspend_current_and_run_next,
+//     unblock_task, TaskControlBlock,
+// };
 use crate::timer::{get_time_us, USEC_PER_SEC};
 
 use super::Result;

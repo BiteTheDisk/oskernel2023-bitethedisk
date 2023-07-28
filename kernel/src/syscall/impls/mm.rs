@@ -8,11 +8,12 @@ use crate::mm::{memory_set, MapPermission};
 use crate::mm::{page_table::PTEFlags, VirtPageNum};
 use crate::mm::{VPNRange, VirtAddr};
 use crate::return_errno;
+use crate::task::processor::{current_process, current_task, current_user_token};
 use crate::{
     consts::PAGE_SIZE,
     fs::open_flags::CreateMode,
     mm::{shared_memory::remove_shm, MmapFlags, MmapProts},
-    task::{current_task, current_user_token},
+    // task::{current_task, current_user_token},
 };
 
 use nix::ipc::{ShmFlags, IPC_PRIVATE, IPC_RMID};
@@ -32,13 +33,13 @@ use super::*;
 /// uintptr_t ret = syscall(SYS_brk, brk);
 /// ```
 pub fn sys_brk(brk: usize) -> Result {
-    let task = current_task().unwrap();
+    let process = current_process();
     if brk == 0 {
-        Ok(task.grow_proc(0) as isize)
+        Ok(process.grow_proc(0) as isize)
     } else {
-        let former_addr = task.grow_proc(0);
+        let former_addr = process.grow_proc(0);
         let grow_size: isize = (brk - former_addr) as isize;
-        Ok(current_task().unwrap().grow_proc(grow_size) as isize)
+        Ok(process.grow_proc(grow_size) as isize)
     }
 }
 
@@ -55,8 +56,8 @@ pub fn sys_brk(brk: usize) -> Result {
 /// int ret = syscall(SYS_munmap, start, len);
 /// ```
 pub fn sys_munmap(addr: usize, length: usize) -> Result {
-    let task = current_task().unwrap();
-    Ok(task.munmap(addr, length) as isize)
+    let process = current_process();
+    Ok(process.munmap(addr, length) as isize)
 }
 
 /// #define SYS_mmap 222
@@ -95,8 +96,8 @@ pub fn sys_mmap(
         padding = 0;
     }
     let length = length + padding;
-    let task = current_task().unwrap();
-    let fd_table = task.fd_table.read();
+    let process = current_process();
+    let fd_table = process.fd_table.read();
     let prot = MmapProts::from_bits(prot).expect("unsupported mmap prot");
     let flags = MmapFlags::from_bits(flags).expect("unsupported mmap flags");
     if !flags.contains(MmapFlags::MAP_ANONYMOUS)
@@ -107,7 +108,7 @@ pub fn sys_mmap(
 
     drop(fd_table);
 
-    let result_addr = task.mmap(addr, length, prot, flags, fd, offset);
+    let result_addr = process.mmap(addr, length, prot, flags, fd, offset);
 
     Ok(result_addr as isize)
 }
@@ -134,8 +135,8 @@ pub fn sys_shmctl(key: usize, cmd: usize, buf: *const u8) -> Result {
 }
 
 pub fn sys_shmat(key: usize, address: usize, shmflg: usize) -> Result {
-    let task = current_task().unwrap();
-    let mut memory_set = task.memory_set.write();
+    let process = current_process();
+    let mut memory_set = process.memory_set.write();
     let address = if address == 0 {
         memory_set.shm_top
     } else {
@@ -147,8 +148,8 @@ pub fn sys_shmat(key: usize, address: usize, shmflg: usize) -> Result {
 }
 
 pub fn sys_shmdt(address: usize) -> Result {
-    let task = current_task().unwrap();
-    let mut memory_set = task.memory_set.write();
+    let process = current_process();
+    let mut memory_set = process.memory_set.write();
     let nattch = memory_set.detach_shm(address.into());
     drop(memory_set);
     // detach_shm called when drop SharedMemoryTracker
@@ -172,8 +173,8 @@ pub fn sys_mprotect(addr: usize, length: usize, prot: usize) -> Result {
         if let Some(pte) = page_table.find_pte(vpn) {
             pte.set_flags(pte_flags);
         } else {
-            let task = current_task().unwrap();
-            let mut memory_set = task.memory_set.write();
+            let process = current_process();
+            let mut memory_set = process.memory_set.write();
             let mmap_start = memory_set.mmap_manager.mmap_start;
             let mmap_top = memory_set.mmap_manager.mmap_top;
             let mmap_perm = MmapProts::from_bits(prot).unwrap();
