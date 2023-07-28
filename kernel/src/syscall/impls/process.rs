@@ -1,6 +1,11 @@
 //! 进程相关系统调用
 
 use crate::board::CLOCK_FREQ;
+use crate::task::manager::pid2process;
+use crate::task::processor::{current_process, current_task, current_user_token};
+use crate::task::signals::{
+    MaskFlags, SigAction, SigInfo, SigMask, Signal, SignalContext, UContext, MAX_SIGNUM,
+};
 use core::usize;
 
 use crate::fs::open_flags::CreateMode;
@@ -9,10 +14,10 @@ use crate::mm::{
     memory_set, translated_bytes_buffer, translated_mut, translated_ref, translated_str, UserBuffer,
 };
 use crate::return_errno;
-use crate::task::{
-    add_task, current_task, current_user_token, exit_current_and_run_next, pid2task,
-    suspend_current_and_run_next, SigAction, SigMask, Signal, SignalContext, MAX_SIGNUM,
-};
+// use crate::task::{
+//     add_task, current_task, current_user_token, exit_current_and_run_next, pid2task,
+//     suspend_current_and_run_next, SigAction, SigMask, Signal, SignalContext, MAX_SIGNUM,
+// };
 use crate::timer::get_timeval;
 use crate::timer::{get_time, NSEC_PER_SEC};
 
@@ -43,19 +48,24 @@ use crate::task::*;
 /// pid_t ret = syscall(SYS_clone, flags, stack, ptid, tls, ctid)
 /// ```
 pub fn sys_do_fork(flags: usize, stack_ptr: usize, ptid: usize, tls: usize, ctid: usize) -> Result {
-    let current_task = current_task().unwrap();
+    let current_process = current_process();
     let signal = flags & 0xff;
     let flags = CloneFlags::from_bits(flags & !0xff).unwrap();
 
-    let new_task = current_task.fork(flags);
+    let new_process = current_process.fork(flags, stack_ptr, tls);
+    let new_process_inner = new_process.inner_mut();
+    let new_task = new_process_inner.get_task_with_tid(0).unwrap().clone();
+    drop(new_process_inner);
+
+    let mut new_task_inner = new_task.inner_mut();
 
     if stack_ptr != 0 {
-        let trap_cx = new_task.inner_mut().trap_context();
+        let trap_cx = new_task_inner.trap_cx_mut();
         trap_cx.set_sp(stack_ptr);
     }
-    let new_pid = new_task.pid.0;
+    let new_pid = new_process.pid.0;
 
-    let memory_set = new_task.memory_set.read();
+    let memory_set = new_process.memory_set.read();
     let child_token = memory_set.token();
     drop(memory_set);
 
@@ -66,21 +76,21 @@ pub fn sys_do_fork(flags: usize, stack_ptr: usize, ptid: usize, tls: usize, ctid
         *translated_mut(child_token, ctid as *mut u32) = new_pid as u32;
     }
     if flags.contains(CloneFlags::CHILD_CLEARTID) {
-        new_task.inner_mut().clear_child_tid = ctid;
+        new_task_inner.clear_child_tid = Some(ctid);
     }
     if flags.contains(CloneFlags::SETTLS) {
-        let trap_cx = new_task.inner_mut().trap_context();
+        let trap_cx = new_task_inner.trap_cx_mut();
         trap_cx.set_tp(tls);
     }
 
     // modify trap context of new_task, because it returns immediately after switching
-    let trap_cx = new_task.inner_mut().trap_context();
+    let trap_cx = new_task_inner.trap_cx_mut();
     // we do not have to move to next instruction since we have done it before
     // trap_handler 已经将当前进程 Trap 上下文中的 sepc 向后移动了 4 字节，
     // 使得它回到用户态之后，会从发出系统调用的 ecall 指令的下一条指令开始执行
 
     trap_cx.x[10] = 0; // 对于子进程，返回值是0
-    add_task(new_task); // 将 fork 到的进程加入任务调度器
+    drop(new_task_inner);
     unsafe {
         core::arch::asm!("sfence.vma");
         core::arch::asm!("fence.i");
@@ -148,7 +158,7 @@ pub fn sys_exec(path: *const u8, mut argv: *const usize, mut envp: *const usize)
     }
     envs_vec.push("PATH=/".to_string());
 
-    let task = current_task().unwrap();
+    let task = current_process();
 
     let inner = task.inner_mut();
     let new_path = inner.cwd.clone().join_string(path);
@@ -178,9 +188,9 @@ pub fn sys_exec(path: *const u8, mut argv: *const usize, mut envp: *const usize)
 /// pid_t ret = syscall(SYS_wait4, pid, status, options);
 /// ```
 pub fn sys_wait4(pid: isize, exit_code_ptr: *mut i32) -> Result {
-    let task = current_task().unwrap();
+    let process = current_process();
 
-    let inner = task.inner_mut();
+    let inner = process.inner_mut();
 
     // 根据pid参数查找有没有符合要求的进程
     if pid == -1 && inner.children.len() == 0 {
@@ -196,7 +206,7 @@ pub fn sys_wait4(pid: isize, exit_code_ptr: *mut i32) -> Result {
     drop(inner);
 
     loop {
-        let mut inner = task.inner_mut();
+        let mut inner = process.inner_mut();
         // 查找所有符合PID要求的处于僵尸状态的进程，如果有的话还需要同时找出它在当前进程控制块子进程向量中的下标
         let pair = inner
             .children
@@ -213,11 +223,11 @@ pub fn sys_wait4(pid: isize, exit_code_ptr: *mut i32) -> Result {
             assert_eq!(Arc::strong_count(&child), 1);
             // 收集的子进程信息返回
             let found_pid = child.pid();
-            let exit_code = child.inner_mut().exit_code;
+            let exit_code = child.inner_mut().exit_code.unwrap();
             // ++++ release child PCB
             // 将子进程的退出码写入到当前进程的应用地址空间中
             if exit_code_ptr as usize != 0 {
-                let memory_set = task.memory_set.read();
+                let memory_set = process.memory_set.read();
                 let token = memory_set.token();
                 drop(memory_set);
                 *translated_mut(token, exit_code_ptr) = exit_code << 8;
@@ -244,12 +254,12 @@ pub fn sys_wait4(pid: isize, exit_code_ptr: *mut i32) -> Result {
 /// syscall(SYS_exit, ec);
 /// ```
 pub fn sys_exit(exit_code: i32) -> ! {
-    exit_current_and_run_next(exit_code);
+    exit_current_and_run_next(exit_code, false);
     unreachable!("unreachable in sys_exit!");
 }
 
 pub fn sys_exit_group(exit_code: i32) -> ! {
-    exit_current_and_run_next(exit_code);
+    exit_current_and_run_next(exit_code, true);
     panic!("Unreachable in sys_exit!");
 }
 
@@ -265,7 +275,7 @@ pub fn sys_exit_group(exit_code: i32) -> ! {
 /// pid_t ret = syscall(SYS_getppid);
 /// ```
 pub fn sys_getppid() -> Result {
-    Ok(current_task().unwrap().tgid as isize)
+    Ok(current_process().tgid as isize)
 }
 
 /// #define SYS_getpid 172
@@ -280,7 +290,7 @@ pub fn sys_getppid() -> Result {
 /// pid_t ret = syscall(SYS_getpid);
 /// ```
 pub fn sys_getpid() -> Result {
-    Ok(current_task().unwrap().pid.0 as isize)
+    Ok(current_process().pid.0 as isize)
 }
 
 pub fn sys_set_tid_address(tidptr: *mut usize) -> Result {
@@ -324,9 +334,16 @@ pub fn sys_kill(pid: usize, signal: u32) -> Result {
         return Ok(0);
     }
     let signal = 1 << signal;
-    if let Some(task) = pid2task(pid) {
+    if let Some(process) = pid2process(pid) {
         if let Some(flag) = SigMask::from_bits(signal) {
-            task.inner_mut().pending_signals |= flag;
+            let process_inner = process.inner_mut();
+            for task in process_inner.tasks.iter().filter(|t| t.is_some()) {
+                let task = task.as_ref().unwrap();
+                let mut task_inner = task.inner_mut();
+                task_inner.pending_signals |= flag;
+                drop(task_inner);
+            }
+            drop(process_inner);
             Ok(0)
         } else {
             return_errno!(Errno::EINVAL, "invalid signal, signum: {}", signal);
@@ -342,13 +359,15 @@ pub fn sys_tkill(tid: usize, signal: usize) -> Result {
         return Ok(0);
     }
     let pid = if tid == 0 {
-        current_task().unwrap().pid.0
+        current_process().pid.0
     } else {
         tid
     };
 
     let signal = 1 << signal;
-    if let Some(task) = pid2task(pid) {
+    let process = current_process();
+    let process_inner = process.inner_mut();
+    if let Some(task) = process_inner.get_task_with_tid(pid) {
         if let Some(flag) = SigMask::from_bits(signal) {
             task.inner_mut().pending_signals |= flag;
             Ok(0)
@@ -374,8 +393,8 @@ pub fn sys_getrusage(who: isize, usage: *mut u8) -> Result {
     let mut rusage = RUsage::new();
     let task = current_task().unwrap();
     let mut inner = task.inner_mut();
-    rusage.ru_stime = inner.stime;
-    rusage.ru_utime = inner.utime;
+    rusage.ru_stime = inner.time_info.stime;
+    rusage.ru_utime = inner.time_info.utime;
     userbuf.write(rusage.as_bytes());
     Ok(0)
 }
@@ -386,20 +405,28 @@ pub fn sys_getrusage(who: isize, usage: *mut u8) -> Result {
 /// int tgkill(int tgid, int tid, int sig);
 /// ```
 pub fn sys_tgkill(tgid: isize, tid: usize, sig: isize) -> Result {
-    if tgid == -1 {
-        todo!("给当前tgid对应的线程组里面所有的线程发送对应的信号")
-    }
-    let master_pid = tgid as usize;
-    let son_pid = tid;
-    if let Some(parent_task) = pid2task(master_pid) {
-        let inner = parent_task.inner_mut();
-        if let Some(target_task) = inner.children.iter().find(|child| child.pid() == son_pid) {
-            todo!("发送信号")
-        } else {
-            todo!("errno")
-        }
+    let process = if tgid == -1 {
+        current_process()
     } else {
-        todo!("errno")
+        if let Some(process) = pid2process(tgid as usize) {
+            process
+        } else {
+            return_errno!(Errno::ESRCH, "could not find task with pid: {}", tgid);
+        }
+    };
+
+    if let Some(flag) = SigMask::from_bits(sig as usize) {
+        let process_inner = process.inner_mut();
+        for task in process_inner.tasks.iter().filter(|t| t.is_some()) {
+            let task = task.as_ref().unwrap();
+            let mut task_inner = task.inner_mut();
+            task_inner.pending_signals |= flag;
+            drop(task_inner);
+        }
+        drop(process_inner);
+        Ok(0)
+    } else {
+        return_errno!(Errno::EINVAL, "invalid signal, signum: {}", sig);
     }
 }
 
@@ -582,8 +609,8 @@ pub struct SchedPolicy(isize);
 //     int sched_priority;
 // };
 pub fn sys_sched_setscheduler(pid: usize, policy: isize, param: *const SchedParam) -> Result {
-    let task = pid2task(pid).ok_or(Errno::UNCLEAR)?;
-    let inner = task.inner_ref();
+    let process = pid2process(pid).ok_or(Errno::UNCLEAR)?;
+    let inner = process.inner_ref();
 
     {
         info!("sched_setscheduler: pid: {}, policy: {}", pid, policy);
@@ -639,7 +666,7 @@ pub fn sys_sigreturn() -> Result {
     let task = current_task().unwrap();
     let mut task_inner = task.inner_mut();
 
-    let trap_cx = task_inner.trap_context();
+    let trap_cx = task_inner.trap_cx_mut();
 
     let siginfo_ptr = trap_cx.x[2];
     trap_cx.x[2] += core::mem::size_of::<SigInfo>();
@@ -680,7 +707,7 @@ pub fn sys_sigreturn() -> Result {
 // ```
 pub fn sys_sigaction(signum: isize, act: *const SigAction, oldact: *mut SigAction) -> Result {
     let token = current_user_token();
-    let task = current_task().unwrap();
+    let task = current_process();
     let mut inner = task.inner_mut();
     let signum = signum as u32;
 
