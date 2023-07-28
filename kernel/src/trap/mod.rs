@@ -2,8 +2,11 @@ mod context;
 pub mod handler;
 
 use self::handler::kernel_trap_handler;
-use crate::consts::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::task::{current_task, current_user_token};
+use crate::consts::{TRAMPOLINE, TRAP_CONTEXT_BASE};
+use crate::task::processor::{
+    current_process, current_task, current_trap_cx_user_va, current_user_token,
+};
+// use crate::task::{current_task, current_user_token};
 use crate::timer::get_timeval;
 use core::arch::{asm, global_asm};
 use riscv::register::{mtvec::TrapMode, sie, stvec};
@@ -51,7 +54,7 @@ pub fn trap_return() -> ! {
 
     let task = current_task().unwrap();
     let mut inner = task.inner_mut();
-    let diff = get_timeval() - inner.last_enter_smode_time;
+    let diff = get_timeval() - inner.time_info.last_enter_smode_time;
     inner.add_stime(diff);
     inner.set_last_enter_umode(get_timeval());
 
@@ -70,12 +73,14 @@ pub fn trap_return() -> ! {
     drop(task);
 
     let trapret_addr = user_trapret as usize - user_trapvec as usize + TRAMPOLINE;
+    let trap_cx_addr = current_trap_cx_user_va();
     unsafe {
         asm!(
             "fence.i",              // 指令清空指令缓存 i-cache
             "jr {user_trapret}",
             user_trapret = in(reg) trapret_addr,
-            in("a0") TRAP_CONTEXT,  // trap 上下文在应用地址空间中的位置
+            // in("a0") TRAP_CONTEXT,  // trap 上下文在应用地址空间中的位置
+            in("a0") trap_cx_addr,  // trap 上下文在应用地址空间中的位置
             in("a1") user_satp,     // 即将回到的应用的地址空间的 token
             options(noreturn)
         );

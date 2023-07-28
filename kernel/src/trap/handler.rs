@@ -11,16 +11,22 @@ use riscv::register::{
     stval,
 };
 
-use crate::mm::VirtAddr;
 use crate::{
     consts::TRAMPOLINE,
     syscall::dispatcher::{syscall, SYS_SIGRETURN},
     task::{
-        current_add_signal, current_task, current_trap_cx, exec_signal_handlers,
-        suspend_current_and_run_next, SigMask,
+        exec_signal_handlers,
+        processor::current_trap_cx,
+        signals::{current_add_signal, SigMask},
+        suspend_current_and_run_next,
     },
+    // task::{
+    //     current_add_signal, current_task, current_trap_cx, exec_signal_handlers,
+    //     suspend_current_and_run_next, SigMask,
+    // },
     timer::{get_timeval, set_next_trigger},
 };
+use crate::{mm::VirtAddr, task::processor::current_task};
 
 use super::{set_kernel_trap_entry, trap_return};
 
@@ -62,7 +68,7 @@ pub fn user_trap_handler() -> ! {
     //
     // 之后再考虑处理这个问题
 
-    let diff = get_timeval() - inner.last_enter_umode_time;
+    let diff = get_timeval() - inner.time_info.last_enter_umode_time;
     inner.add_utime(diff);
     inner.set_last_enter_smode(get_timeval());
     drop(inner);
@@ -119,7 +125,8 @@ pub fn user_trap_handler() -> ! {
 
             // println!("######### check_lazy ##############");
 
-            let lazy = task.check_lazy(va, is_load);
+            let prcess = task.process.upgrade().unwrap();
+            let lazy = prcess.check_lazy(va, is_load);
             if lazy != 0 {
                 println!("LAZY FAIL {:?}", lazy);
                 current_add_signal(SigMask::SIGSEGV);
@@ -130,10 +137,14 @@ pub fn user_trap_handler() -> ! {
         Trap::Exception(Exception::InstructionFault)
         | Trap::Exception(Exception::InstructionPageFault) => {
             let task = current_task().unwrap();
+            let tid = task.inner_ref().tid();
+            let prcess = task.process.upgrade().unwrap();
+            let pid = prcess.pid.0;
             debug!(
-                "{:?} in application {}, bad addr = {:#x}, bad instruction = {:#x}.",
+                "{:?} in application {}(tid={}), bad addr = {:#x}, bad instruction = {:#x}.",
                 scause.cause(),
-                task.pid.0,
+                pid,
+                tid,
                 stval,
                 current_trap_cx().sepc,
             );
