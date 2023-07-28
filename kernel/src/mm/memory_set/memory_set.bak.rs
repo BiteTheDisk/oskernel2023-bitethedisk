@@ -3,8 +3,8 @@
 use super::vm_area::{VmArea, VmAreaType};
 use super::{MapPermission, MapType};
 use crate::consts::{
-    CLOCK_FREQ, PAGE_SIZE, SIGNAL_TRAMPOLINE, TRAMPOLINE, TRAP_CONTEXT_BASE, USER_HEAP_SIZE,
-    USER_STACK_BASE, USER_STACK_SIZE,
+    CLOCK_FREQ, PAGE_SIZE, SIGNAL_TRAMPOLINE, TRAMPOLINE, TRAP_CONTEXT, USER_HEAP_SIZE,
+    USER_STACK_SIZE,
 };
 use crate::fs::file::File;
 use crate::mm::frame_allocator::enquire_refcount;
@@ -225,7 +225,7 @@ impl MemorySet {
     fn map_trap_context(&mut self) {
         self.insert(
             VmArea::new(
-                TRAP_CONTEXT_BASE.into(),
+                TRAP_CONTEXT.into(),
                 SIGNAL_TRAMPOLINE.into(),
                 MapType::Framed,
                 VmAreaType::TrapContext,
@@ -305,7 +305,7 @@ impl MemorySet {
 
         memory_set.map_trampoline();
         memory_set.map_signal_trampoline();
-        // memory_set.map_trap_context();
+        memory_set.map_trap_context();
 
         // 第一次读取前64字节确定程序表的位置与大小
         let elf_head_data = elf_file.read_to_vec(0, 64);
@@ -445,8 +445,8 @@ impl MemorySet {
         } else {
             auxs.push(AuxEntry(AT_BASE, 0));
         }
-        // let user_stack_top = TRAP_CONTEXT - PAGE_SIZE;
-        // let user_stack_bottom = user_stack_top - USER_STACK_SIZE;
+        let user_stack_top = TRAP_CONTEXT - PAGE_SIZE;
+        let user_stack_bottom = user_stack_top - USER_STACK_SIZE;
 
         // auxs.push(AuxEntry(AT_BASE, 0));
 
@@ -479,11 +479,25 @@ impl MemorySet {
         // do not add this line, program will run additional check?
         auxs.push(AuxEntry(
             AT_RANDOM,
-            USER_STACK_BASE, // TODO
+            user_stack_top - 2 * core::mem::size_of::<usize>(),
         ));
         // auxs.push(AuxEntry(AT_EXECFN, 32));
         // do not add this line, too wide
         // auxs.push(AuxEntry(AT_NULL, 0));
+
+        // 分配用户栈
+        memory_set.insert(
+            VmArea::new(
+                user_stack_bottom.into(),
+                user_stack_top.into(),
+                MapType::Framed,
+                VmAreaType::UserStack,
+                MapPermission::R | MapPermission::W | MapPermission::U,
+                Some(Arc::clone(&elf_file)),
+                VirtAddr(user_stack_bottom).page_offset(),
+            ),
+            None,
+        );
 
         // 分配用户堆，懒加载
         let user_heap_bottom: usize = usize::from(brk_start_va) + PAGE_SIZE;
@@ -504,7 +518,7 @@ impl MemorySet {
 
         LoadedELF {
             memory_set,
-            user_stack_top: USER_STACK_BASE,
+            user_stack_top,
             elf_entry: entry_point,
             auxs,
         }
