@@ -92,8 +92,11 @@ pub fn user_trap_handler() -> ! {
             );
 
             // cx is changed during sys_exec, so we have to call it again
-            cx = current_trap_cx();
-            cx.x[10] = result as usize;
+            // sigreteurn 不应该写入返回值，可能会覆盖中断前寄存器的内容(信号处理与一般系统调用不同，信号处理会打断正常的程序流程， 详情看 man 文档)
+            if !is_sigreturn {
+                cx = current_trap_cx();
+                cx.x[10] = result as usize;
+            }
         }
 
         Trap::Exception(Exception::StoreFault)

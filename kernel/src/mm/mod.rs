@@ -146,6 +146,7 @@ pub fn copyin<T>(token: usize, dst: &mut T, src: *const T) {
     }
 }
 
+// TODO 检测 translated_mut/ref 跨页隐患
 pub fn copyout<T>(token: usize, dst: *mut T, src: &T) {
     let mut dst_buffer =
         translated_bytes_buffer(token, dst as *const u8, core::mem::size_of::<T>());
