@@ -65,7 +65,7 @@ pub fn meow() -> ! {
         timer::set_next_trigger();
         fs::init();
         task::add_initproc();
-        task::run_tasks();
+        task::processor::run_tasks();
     } else {
         loop {}
     }
