@@ -17,8 +17,9 @@ pub use page_table::{PTEFlags, PageTable, PageTableEntry};
 use riscv::register::satp;
 pub use user_buffer::{UserBuffer, UserBufferIterator};
 pub use vma::*;
+// pub use shared_memory::*;
 
-use crate::{consts::PAGE_SIZE, task::processor::current_task};
+use crate::{consts::PAGE_SIZE, task::current_task};
 
 use self::{address::Step, kernel_vmm::acquire_kvmm};
 
@@ -55,9 +56,7 @@ pub fn translated_bytes_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<
         let ppn = match page_table.translate(vpn) {
             Some(pte) => pte.ppn(),
             None => {
-                let task = current_task().unwrap();
-                let process = task.process.upgrade().unwrap();
-                if process.check_lazy(start, true) != 0 {
+                if current_task().unwrap().check_lazy(start, true) != 0 {
                     panic!("check lazy error");
                 }
                 page_table.translate(vpn).unwrap().ppn()
