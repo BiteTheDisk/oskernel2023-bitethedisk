@@ -57,7 +57,7 @@ pub fn translated_bytes_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<
             None => {
                 let task = current_task().unwrap();
                 let process = task.process.upgrade().unwrap();
-                if process.check_lazy(start, true) != 0 {
+                if process.check_lazy(start) != 0 {
                     panic!("check lazy error");
                 }
                 page_table.translate(vpn).unwrap().ppn()
@@ -125,10 +125,8 @@ pub fn translated_mut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .as_mut()
 }
 
-#[allow(unused)]
 pub fn copyin<T>(token: usize, dst: &mut T, src: *const T) {
-    let mut src_buffer =
-        translated_bytes_buffer(token, src as *const u8, core::mem::size_of::<T>());
+    let src_buffer = translated_bytes_buffer(token, src as *const u8, core::mem::size_of::<T>());
 
     let dst_slice = unsafe {
         core::slice::from_raw_parts_mut(dst as *mut T as *mut u8, core::mem::size_of::<T>())

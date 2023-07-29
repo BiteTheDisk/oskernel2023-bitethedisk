@@ -107,14 +107,14 @@ pub fn user_trap_handler() -> ! {
             //     current_trap_cx().sepc,
             // );
 
-            let is_load: bool;
-            if scause.cause() == Trap::Exception(Exception::LoadFault)
-                || scause.cause() == Trap::Exception(Exception::LoadPageFault)
-            {
-                is_load = true;
-            } else {
-                is_load = false;
-            }
+            // let is_load: bool;
+            // if scause.cause() == Trap::Exception(Exception::LoadFault)
+            //     || scause.cause() == Trap::Exception(Exception::LoadPageFault)
+            // {
+            //     is_load = true;
+            // } else {
+            //     is_load = false;
+            // }
 
             let va: VirtAddr = (stval as usize).into();
             if va > TRAMPOLINE.into() {
@@ -126,7 +126,7 @@ pub fn user_trap_handler() -> ! {
             // println!("######### check_lazy ##############");
 
             let prcess = task.process.upgrade().unwrap();
-            let lazy = prcess.check_lazy(va, is_load);
+            let lazy = prcess.check_lazy(va);
             if lazy != 0 {
                 println!("LAZY FAIL {:?}", lazy);
                 current_add_signal(SigMask::SIGSEGV);
