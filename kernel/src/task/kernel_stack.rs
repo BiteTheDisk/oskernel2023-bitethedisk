@@ -9,8 +9,7 @@ use crate::{
 };
 
 lazy_static! {
-    static ref KSTACK_ALLOCATOR: RwLock<RecycleAllocator> =
-        unsafe { RwLock::new(RecycleAllocator::new()) };
+    static ref KSTACK_ALLOCATOR: RwLock<RecycleAllocator> = RwLock::new(RecycleAllocator::new());
 }
 
 /// Return (bottom, top) of a kernel stack in kernel space.

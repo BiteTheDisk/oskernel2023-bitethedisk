@@ -111,7 +111,7 @@ impl TaskManager {
 lazy_static! {
     pub static ref TASK_MANAGER: SyncRefCell<TaskManager> = SyncRefCell::new(TaskManager::new());
     pub static ref PID2PCB: RwLock<BTreeMap<usize, Arc<ProcessControlBlock>>> =
-        unsafe { RwLock::new(BTreeMap::new()) };
+        RwLock::new(BTreeMap::new());
 }
 
 /// 将一个任务加入到全局 `FIFO 任务管理器` `TASK_MANAGER` 就绪队列的队尾
