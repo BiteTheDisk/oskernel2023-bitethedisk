@@ -355,8 +355,13 @@ impl ProcessControlBlock {
         // clone parent's memory_set completely including trampoline/ustacks/trap_cxs
         // 复制trap_cx和ustack等内存区域均在这里
         // 因此后面不需要再alloc_user_res了
-        // TODO 修改 from_copy_on_write
-        let memory_set = MemorySet::from_copy_on_write(&mut self.memory_set.write()); // use 4 pages
+        let memory_set = if flags.contains(CloneFlags::VM) {
+            self.memory_set.clone()
+        } else {
+            Arc::new(RwLock::new(MemorySet::from_copy_on_write(
+                &mut self.memory_set.write(),
+            )))
+        };
 
         let mut fd_table = Vec::with_capacity(FD_LIMIT);
         // parent fd table
@@ -401,7 +406,7 @@ impl ProcessControlBlock {
             tgid,
             pgid,
             sigactions,
-            memory_set: Arc::new(RwLock::new(memory_set)),
+            memory_set,
             fd_table: Arc::new(RwLock::new(fd_table)),
             inner: Arc::new(RwLock::new(ProcessControlBlockInner {
                 parent: Some(Arc::downgrade(self)),
