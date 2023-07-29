@@ -52,6 +52,7 @@ pub fn sys_do_fork(flags: usize, stack_ptr: usize, ptid: usize, tls: usize, ctid
     let signal = flags & 0xff;
     let flags = CloneFlags::from_bits(flags & !0xff).unwrap();
 
+    // TODO Clone thread
     let new_process = current_process.fork(flags, stack_ptr, tls);
     let new_process_inner = new_process.inner_mut();
     let new_task = new_process_inner.get_task_with_tid(0).unwrap().clone();
@@ -295,6 +296,9 @@ pub fn sys_getpid() -> Result {
 
 pub fn sys_set_tid_address(tidptr: *mut usize) -> Result {
     let token = current_user_token();
+    let task = current_task().unwrap();
+    let mut inner_mut = task.inner_mut();
+    inner_mut.clear_child_tid = Some(tidptr as usize);
     *translated_mut(token, tidptr) = 0 as usize;
     Ok(0)
 }
