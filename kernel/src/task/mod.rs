@@ -12,7 +12,7 @@ use self::{
     initproc::INITPROC,
     manager::{add_task, block_task, remove_from_pid2process},
     process::ProcessControlBlock,
-    processor::{acquire_processor, current_task, schedule, take_current_task},
+    processor::{acquire_processor, current_process, current_task, schedule, take_current_task},
     signals::{SigMask, SigSet, Signal},
     task::{TaskStatus, TaskUserRes},
 };
@@ -54,6 +54,12 @@ pub fn suspend_current_and_run_next() {
     // 若不这么做，该线程将自己挂到就绪队列，另一cpu核可能趁此机会取出该线程，并进入该线程的内核栈
     // 从而引发错乱。
     // 将进程加入进程管理器中的就绪队列
+    // {
+    //     let process = task.process.upgrade().unwrap();
+    //     let pid = process.pid.0;
+    //     let tid = task.inner_ref().tid();
+    //     info!("suspend_current_and_run_next, pid:{}, tid:{}", pid, tid);
+    // }
     add_task(task);
 
     // 开启一轮新的调度
@@ -177,6 +183,7 @@ pub fn add_initproc() {
 }
 
 pub fn exec_signal_handlers() {
+    check_current_porcess_all_tasks_pending_signal();
     let task = current_task().unwrap();
     let mut task_inner = task.inner_mut();
     if task_inner.pending_signals == SigSet::empty() {
@@ -206,6 +213,7 @@ pub fn exec_signal_handlers() {
 
         // 如果信号对应的处理函数存在，则做好跳转到 handler 的准备
         let handler = sigaction.sa_handler;
+        // info!("signal {} handler at {:x}", signum, handler);
         match handler {
             SIG_IGN => {
                 // return;
@@ -221,7 +229,6 @@ pub fn exec_signal_handlers() {
                 return;
             }
             _ => {
-                // info!("signal {} handler at {:x}", signum, handler);
                 // 阻塞当前信号以及 sigaction.sa_mask 中的信号
                 let mut sigmask = sigaction.sa_mask.clone();
                 if !sigaction.sa_flags.contains(SAFlags::SA_NODEFER) {
@@ -271,5 +278,22 @@ pub fn exec_signal_handlers() {
                 return;
             }
         }
+    }
+}
+
+fn check_current_porcess_all_tasks_pending_signal() {
+    let process = current_process();
+    let pid = process.pid();
+
+    let process_inner = process.inner_ref();
+    for task in process_inner.tasks.iter().filter(|t| t.is_some()) {
+        let t = task.as_ref().unwrap();
+        let tid = t.inner_ref().tid();
+        println!(
+            "check pending signals: pid={}, tid={}, signal={:?}",
+            pid,
+            tid,
+            t.inner_ref().pending_signals.clone()
+        )
     }
 }

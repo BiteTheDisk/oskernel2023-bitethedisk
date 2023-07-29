@@ -13,7 +13,7 @@ use crate::syscall::errno;
 use crate::syscall::futex::{FutexQueue, FutexWaiter};
 use crate::task::block_current_and_run_next;
 use crate::task::manager::unblock_task;
-use crate::task::processor::{current_task, current_user_token};
+use crate::task::processor::{current_process, current_task, current_user_token};
 use crate::timer::{get_time_us, USEC_PER_SEC};
 
 use super::Result;
@@ -136,7 +136,13 @@ pub fn futex_wait(uaddr: usize, val: u32, timeout: usize) -> Result {
     drop(task);
     // warning: Auto waking-up has not been implemented yet
 
-    // info!("futex_wait: block_current_and_run_next");
+    // {
+    //     info!("futex_wait: block_current_and_run_next");
+    //     let process = current_process();
+    //     let pid = process.pid();
+    //     let tid = current_task().unwrap().inner_ref().tid();
+    //     info!("futex_wait: pid: {}, tid: {}", pid, tid);
+    // }
 
     block_current_and_run_next();
 

@@ -100,6 +100,15 @@ impl TaskManager {
     pub fn check_interupt(&mut self) -> Option<Arc<TaskControlBlock>> {
         for tcb in self.waiting_queue.iter() {
             let lock = tcb.inner_ref();
+            // {
+            //     let parent = tcb.process.upgrade().unwrap();
+            //     let pid = parent.pid();
+            //     let tid = lock.tid();
+            //     info!(
+            //         "check interupt: pid={}, tid={} {:?}",
+            //         pid, tid, lock.pending_signals
+            //     );
+            // }
             if !lock.pending_signals.difference(lock.sigmask).is_empty() {
                 return Some(tcb.clone());
             }
