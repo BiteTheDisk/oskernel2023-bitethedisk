@@ -16,7 +16,7 @@ use super::{
     task::{RecycleAllocator, TaskControlBlock, FD_LIMIT},
 };
 use crate::{
-    consts::{PAGE_SIZE, TRAP_CONTEXT_BASE, USER_HEAP_SIZE},
+    consts::{PAGE_SIZE, USER_HEAP_SIZE},
     fs::{file::File, AbsolutePath, Stdin, Stdout},
     mm::{
         kernel_vmm::acquire_kvmm,
@@ -193,17 +193,17 @@ impl ProcessControlBlock {
         let token = memory_set.token();
         drop(memory_set);
 
-        // 计算共需要多少字节的空间
-        let mut total_len = 0;
-        for i in 0..envs.len() {
-            total_len += envs[i].len() + 1; // String 不包含 '\0'
-        }
-        for i in 0..args.len() {
-            total_len += args[i].len() + 1;
-        }
-
         let mut user_sp = user_sp;
-        // 先进行进行对齐
+
+        // 先进行进行对齐 (qemu 暂时不用)
+        // 计算共需要多少字节的空间
+        // let mut total_len = 0;
+        // for i in 0..envs.len() {
+        //     total_len += envs[i].len() + 1; // String 不包含 '\0'
+        // }
+        // for i in 0..args.len() {
+        //     total_len += args[i].len() + 1;
+        // }
         // let align = core::mem::size_of::<usize>() / core::mem::size_of::<u8>(); // 8
         // let mut user_sp = user_sp - (align - total_len % align) * core::mem::size_of::<u8>();
         // user_sp -= core::mem::size_of::<usize>();
@@ -319,7 +319,7 @@ impl ProcessControlBlock {
 
         // then we alloc user resource for main thread again
         // since memory_set has been changed
-        let mut inner = self.inner_mut();
+        let inner = self.inner_ref();
         let task = inner.get_task_with_tid(0).unwrap().clone();
         drop(inner);
         let mut task_inner = task.inner_mut();
@@ -327,10 +327,9 @@ impl ProcessControlBlock {
         res.ustack_top = user_sp;
         res.alloc_user_res();
         let trap_cx_ppn = res.trap_cx_ppn();
-        let mut user_sp = res.ustack_top();
-        drop(res);
+        let user_sp = res.ustack_top();
         task_inner.trap_cx_ppn = trap_cx_ppn;
-        let mut trap_cx = task_inner.trap_cx_mut();
+        let trap_cx = task_inner.trap_cx_mut();
         let (user_sp, args_ptr, envs_ptr, auxs_ptr) =
             self.init_ustack(user_sp, args, envs, &mut auxs);
         // 修改新的地址空间中的 Trap 上下文，将解析得到的应用入口点、用户栈位置以及一些内核的信息进行初始化
@@ -387,7 +386,7 @@ impl ProcessControlBlock {
         } else {
             // parent sigactions
             let psa_ref = self.sigactions.read();
-            let mut sa = Arc::new(RwLock::new([SigAction::new(); MAX_SIGNUM as usize]));
+            let sa = Arc::new(RwLock::new([SigAction::new(); MAX_SIGNUM as usize]));
             let mut sa_mut = sa.write();
             for i in 1..MAX_SIGNUM as usize {
                 sa_mut[i] = psa_ref[i].clone();
@@ -440,7 +439,7 @@ impl ProcessControlBlock {
 
         // modify kstack_top in trap_cx of this thread
         let task_inner = task.inner_ref();
-        let mut trap_cx = task_inner.trap_cx_mut();
+        let trap_cx = task_inner.trap_cx_mut();
         trap_cx.kernel_sp = task.kstack.top();
 
         // sys_fork return value
@@ -472,7 +471,7 @@ impl ProcessControlBlock {
     /// 分别用于：
     ///     - 用户态：handler page fault
     ///     - 内核态： translate_bytes_buffer
-    pub fn check_lazy(&self, va: VirtAddr, is_load: bool) -> isize {
+    pub fn check_lazy(&self, va: VirtAddr) -> isize {
         let mut memory_set = self.memory_set.write();
 
         let mmap_start = memory_set.mmap_manager.mmap_start;
