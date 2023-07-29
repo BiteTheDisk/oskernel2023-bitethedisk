@@ -13,7 +13,7 @@ use self::{
     manager::{add_task, block_task, remove_from_pid2process},
     process::ProcessControlBlock,
     processor::{acquire_processor, current_process, current_task, schedule, take_current_task},
-    signals::{SigMask, SigSet, Signal},
+    signals::{SigMask, SigSet, Signal, SIG_DFL, SIG_IGN},
     task::{TaskStatus, TaskUserRes},
 };
 
@@ -183,7 +183,7 @@ pub fn add_initproc() {
 }
 
 pub fn exec_signal_handlers() {
-    check_current_porcess_all_tasks_pending_signal();
+    // check_current_porcess_all_tasks_pending_signal();
     let task = current_task().unwrap();
     let mut task_inner = task.inner_mut();
     if task_inner.pending_signals == SigSet::empty() {
@@ -197,6 +197,18 @@ pub fn exec_signal_handlers() {
     }
 
     loop {
+        // {
+        //     let process = current_process();
+        //     let pid = process.pid();
+        //     let task = current_task().unwrap();
+        //     let tid = task_inner.tid();
+        //     info!(
+        //         "exec_signal: pid={}, tid={}, pending_signal={:?}",
+        //         pid,
+        //         tid,
+        //         task_inner.pending_signals.clone()
+        //     )
+        // }
         // 取出 pending 的第一个 signal
         let signum = match task_inner
             .pending_signals
@@ -206,14 +218,34 @@ pub fn exec_signal_handlers() {
             Some(s) => s,
             None => return,
         };
+
         task_inner.pending_signals.sub(signum);
+
+        // {
+        // let process = current_process();
+        //     let pid = process.pid();
+        //     let task = current_task().unwrap();
+        //     let tid = task_inner.tid();
+        //     info!(
+        //         "exec_signal: pid={}, tid={}, pending_signal={:?}",
+        //         pid,
+        //         tid,
+        //         task_inner.pending_signals.clone()
+        //     )
+        // }
 
         let process = task.process.upgrade().unwrap();
         let sigaction = process.sigactions.read()[signum as usize];
 
         // 如果信号对应的处理函数存在，则做好跳转到 handler 的准备
         let handler = sigaction.sa_handler;
+        // {
+        //     warn!("signum={}, handler={:x?}", signum, handler);
+        // }
         // info!("signal {} handler at {:x}", signum, handler);
+
+        // 之前没有导入SIG_DFL, SIG_IGN, 提示不可达，但是没有注意，因为编译没有报错
+        // 没有导入，结果没有任何运行结果 但问题还在futex上
         match handler {
             SIG_IGN => {
                 // return;
