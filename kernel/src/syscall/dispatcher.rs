@@ -1,7 +1,5 @@
 //! 根据 SYS_id 分发具体系统调用
 
-// use crate::task::{current_task, SigAction};
-
 use crate::task::signals::SigAction;
 
 use super::impls::*;
@@ -199,6 +197,19 @@ pub fn syscall_name(id: usize) -> &'static str {
 
 /// 系统调用分发函数
 pub fn syscall(syscall_id: usize, args: [usize; 6]) -> isize {
+    // {
+    //     use crate::task::processor::{current_process, current_task};
+    //     let task = current_task().unwrap();
+    //     let tid = task.inner_ref().tid();
+    //     let process = current_process();
+    //     let pid = process.pid();
+    //     println!(
+    //         "[START] syscall: {}, from pid: {}, tid: {}",
+    //         syscall_name(syscall_id),
+    //         pid,
+    //         tid,
+    //     );
+    // }
     let ret = match syscall_id {
         SYS_CLONE => sys_do_fork(args[0], args[1], args[2], args[3], args[4]),
 
@@ -382,10 +393,19 @@ pub fn syscall(syscall_id: usize, args: [usize; 6]) -> isize {
         SYS_TILL => sys_tkill(args[0], args[1]),
         _ => panic!("unsupported syscall, syscall id: {:?}", syscall_id),
     };
-    // println!(
-    //     "[DEBUG] syscall end pid:{:?}",
-    //     current_task().unwrap().pid.0,
-    // );
+    {
+        use crate::task::processor::{current_process, current_task};
+        let task = current_task().unwrap();
+        let tid = task.inner_ref().tid();
+        let process = current_process();
+        let pid = process.pid();
+        println!(
+            "[END  ] syscall: {}, from pid: {}, tid: {}",
+            syscall_name(syscall_id),
+            pid,
+            tid,
+        );
+    }
     match ret {
         Ok(data) => data,
         Err(err) => {

@@ -14,10 +14,6 @@ use crate::syscall::futex::{FutexQueue, FutexWaiter};
 use crate::task::block_current_and_run_next;
 use crate::task::manager::unblock_task;
 use crate::task::processor::{current_task, current_user_token};
-// use crate::task::{
-//     block_current_and_run_next, current_task, current_user_token, suspend_current_and_run_next,
-//     unblock_task, TaskControlBlock,
-// };
 use crate::timer::{get_time_us, USEC_PER_SEC};
 
 use super::Result;
@@ -75,11 +71,16 @@ pub fn sys_futex(
             } else {
                 usize::MAX // inf
             };
+            // info!("futex_wait");
             futex_wait(uaddr as usize, val, time)
         }
-        FUTEX_WAKE => futex_wake(uaddr as usize, val),
+        FUTEX_WAKE => {
+            // info!("futex_wake");
+            futex_wake(uaddr as usize, val)
+        }
         FUTEX_REQUEUE => {
             // val2 is a limit
+            // info!("futex_requeue");
             futex_requeue(uaddr as usize, val, uaddr2 as usize, val2 as u32)
         }
         _ => panic!("ENOSYS"),
@@ -135,6 +136,8 @@ pub fn futex_wait(uaddr: usize, val: u32, timeout: usize) -> Result {
     drop(task);
     // warning: Auto waking-up has not been implemented yet
 
+    // info!("futex_wait: block_current_and_run_next");
+
     block_current_and_run_next();
 
     let task = current_task().unwrap();
@@ -143,6 +146,8 @@ pub fn futex_wait(uaddr: usize, val: u32, timeout: usize) -> Result {
     if !inner.pending_signals.difference(inner.sigmask).is_empty() {
         return Err(Errno::EINTR);
     }
+
+    // info!("exit futex_wait");
 
     Ok(0)
 }

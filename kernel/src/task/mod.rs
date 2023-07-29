@@ -171,14 +171,21 @@ pub fn block_current_and_run_next() {
 /// 将初始进程 `initproc` 加入任务管理器
 pub fn add_initproc() {
     // add_task(INITPROC.clone());
+    // 由于目前是在 fork 最后就 add_task，所以这里不需要再次 add_task;
+    // 用于 lazy initproc
     let _initproc = INITPROC.clone();
 }
 
 pub fn exec_signal_handlers() {
     let task = current_task().unwrap();
     let mut task_inner = task.inner_mut();
-
     if task_inner.pending_signals == SigSet::empty() {
+        // {
+        //     let process = task.process.upgrade().unwrap();
+        //     let pid = process.pid();
+        //     let tid = task_inner.tid();
+        //     info!("exec_signal pid:{:?} tid:{:?}", pid, tid);
+        // }
         return;
     }
 
@@ -205,6 +212,7 @@ pub fn exec_signal_handlers() {
                 continue; // loop
             }
             SIG_DFL => {
+                // info!("default handler for signal {}", signum);
                 if signum == Signal::SIGKILL as u32 || signum == Signal::SIGSEGV as u32 {
                     drop(task_inner);
                     drop(task);
@@ -213,6 +221,7 @@ pub fn exec_signal_handlers() {
                 return;
             }
             _ => {
+                // info!("signal {} handler at {:x}", signum, handler);
                 // 阻塞当前信号以及 sigaction.sa_mask 中的信号
                 let mut sigmask = sigaction.sa_mask.clone();
                 if !sigaction.sa_flags.contains(SAFlags::SA_NODEFER) {

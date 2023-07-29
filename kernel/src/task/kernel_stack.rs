@@ -25,6 +25,16 @@ pub fn kstack_alloc() -> KernelStack {
     let kstack_id = KSTACK_ALLOCATOR.write().alloc();
     let (kstack_bottom, kstack_top) = kernel_stack_position(kstack_id);
 
+    // {
+    //     let kstack_bottom_va: VirtAddr = kstack_bottom.into();
+    //     let kstack_top_va: VirtAddr = kstack_top.into();
+
+    //     info!(
+    //         "alloc kernel stack id: {}, {:#x} - {:#x}",
+    //         kstack_id, kstack_bottom_va.0, kstack_top_va.0
+    //     )
+    // }
+
     acquire_kvmm().insert_framed_area(
         kstack_bottom.into(),
         kstack_top.into(),

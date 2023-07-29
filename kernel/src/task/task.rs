@@ -127,11 +127,17 @@ impl TaskControlBlock {
         self.inner.read()
     }
 
+    pub fn is_main_thread(&self) -> bool {
+        self.inner_ref().tid() == 0
+    }
+
+    // TODO sigmask
     pub fn new(process: Arc<ProcessControlBlock>, ustack_top: usize, alloc_user_res: bool) -> Self {
         let res = TaskUserRes::new(Arc::clone(&process), ustack_top, alloc_user_res);
         let trap_cx_ppn = res.trap_cx_ppn();
         let kstack = kstack_alloc();
         let kstack_top = kstack.top();
+
         Self {
             process: Arc::downgrade(&process),
             kstack,
@@ -142,7 +148,6 @@ impl TaskControlBlock {
                     task_cx: TaskContext::readied_for_switching(kstack_top),
                     task_status: TaskStatus::Ready,
                     exit_code: None,
-                    // clone_info: CloneInfo::empty(),
                     clear_child_tid: None,
                     time_info: TimeInfo::empty(),
                     sigmask: SigMask::empty(),
@@ -206,7 +211,7 @@ impl RecycleAllocator {
 /// Task User Resource
 pub struct TaskUserRes {
     pub tid: usize,
-    pub ustack_top: usize,
+    pub ustack_base: usize,
     pub process: Weak<ProcessControlBlock>,
 }
 
@@ -223,7 +228,7 @@ impl TaskUserRes {
         let tid = process.inner_mut().alloc_tid();
         let task_user_res = Self {
             tid,
-            ustack_top,
+            ustack_base: ustack_top,
             process: Arc::downgrade(&process),
         };
         if alloc_user_res {
@@ -235,7 +240,7 @@ impl TaskUserRes {
     pub fn alloc_user_res(&self) {
         let process = self.process.upgrade().unwrap();
         // alloc user stack
-        let ustack_bottom = ustack_bottom_from_tid(self.ustack_top, self.tid);
+        let ustack_bottom = ustack_bottom_from_tid(self.ustack_base, self.tid);
         let ustack_top = ustack_bottom + USER_STACK_SIZE;
 
         let mut memory_set = process.memory_set.write();
@@ -261,7 +266,7 @@ impl TaskUserRes {
         let process = self.process.upgrade().unwrap();
         let mut memory_set = process.memory_set.write();
         // dealloc ustack manually
-        let ustack_bottom_va: VirtAddr = ustack_bottom_from_tid(self.ustack_top, self.tid).into();
+        let ustack_bottom_va: VirtAddr = ustack_bottom_from_tid(self.ustack_base, self.tid).into();
         memory_set.remove_area_with_start_vpn(ustack_bottom_va.into());
         // dealloc trap_cx manually
         let trap_cx_bottom_va: VirtAddr = trap_cx_bottom_from_tid(self.tid).into();
@@ -295,10 +300,10 @@ impl TaskUserRes {
     }
 
     pub fn ustack_base(&self) -> usize {
-        self.ustack_top
+        self.ustack_base
     }
     pub fn ustack_top(&self) -> usize {
-        ustack_bottom_from_tid(self.ustack_top, self.tid) + USER_STACK_SIZE
+        ustack_bottom_from_tid(self.ustack_base, self.tid) + USER_STACK_SIZE
     }
 }
 
