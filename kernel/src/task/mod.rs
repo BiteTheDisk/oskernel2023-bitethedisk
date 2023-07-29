@@ -2,7 +2,8 @@ use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
     consts::SIGNAL_TRAMPOLINE,
-    mm::translated_mut,
+    mm::{memory_set, translated_mut},
+    syscall::futex_wake,
     task::signals::{SAFlags, SigInfo, SignalContext, UContext},
 };
 
@@ -64,6 +65,15 @@ pub fn exit_current_and_run_next(exit_code: i32, is_exit_group: bool) {
     let process = task.process.upgrade().unwrap();
     let mut task_inner = task.inner_mut();
     let tid = task_inner.res.as_ref().unwrap().tid;
+
+    // do futex_wake if clear_child_tid is set
+    if let Some(clear_child_tid) = task_inner.clear_child_tid {
+        let memory_set = process.memory_set.read();
+        *translated_mut(memory_set.token(), clear_child_tid as *mut usize) = 0;
+        drop(memory_set);
+        futex_wake(clear_child_tid, 1).unwrap();
+    }
+
     // record exit code
     task_inner.exit_code = Some(exit_code);
     // remove user task resource
