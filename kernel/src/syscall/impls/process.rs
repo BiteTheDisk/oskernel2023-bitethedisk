@@ -2,6 +2,7 @@
 
 use crate::board::CLOCK_FREQ;
 use crate::task::manager::pid2process;
+use crate::task::process::ProcessControlBlock;
 use crate::task::processor::{current_process, current_task, current_user_token};
 use crate::task::signals::{
     MaskFlags, SigAction, SigInfo, SigMask, Signal, SignalContext, UContext, MAX_SIGNUM,
@@ -48,56 +49,84 @@ use crate::task::*;
 /// ```c
 /// pid_t ret = syscall(SYS_clone, flags, stack, ptid, tls, ctid)
 /// ```
-pub fn sys_do_fork(flags: usize, stack_ptr: usize, ptid: usize, tls: usize, ctid: usize) -> Result {
+pub fn sys_do_fork(
+    flags: usize,
+    stack_ptr: usize,
+    ptid_ptr: usize,
+    tls: usize,
+    ctid_ptr: usize,
+) -> Result {
     let current_process = current_process();
     let signal = flags & 0xff;
     let flags = CloneFlags::from_bits(flags & !0xff).unwrap();
 
-    // TODO Clone thread
-    let new_process = current_process.fork(flags, stack_ptr, tls);
-    let new_process_inner = new_process.inner_mut();
-    let new_task = new_process_inner.get_task_with_tid(0).unwrap().clone();
-    drop(new_process_inner);
+    if flags.contains(CloneFlags::THREAD) {
+        info!("do_fork: clone thread");
+        let current_task = current_task().unwrap().clone();
+        let new_task = ProcessControlBlock::pthread_create(current_task, flags, stack_ptr, tls);
+        let mut new_task_inner = new_task.inner_mut();
 
-    let mut new_task_inner = new_task.inner_mut();
+        let new_tid = new_task_inner.tid();
+        if flags.contains(CloneFlags::PARENT_SETTID) && ptid_ptr as usize != 0 {
+            *translated_mut(current_user_token(), ptid_ptr as *mut u32) = new_tid as u32;
+        }
+        if flags.contains(CloneFlags::CHILD_CLEARTID) && ctid_ptr as usize != 0 {
+            new_task_inner.clear_child_tid = Some(ctid_ptr);
+        }
+        drop(new_task_inner);
+        unsafe {
+            core::arch::asm!("sfence.vma");
+            core::arch::asm!("fence.i");
+        }
+        Ok(new_tid as isize)
+    } else {
+        let new_process = current_process.fork(flags, stack_ptr, tls);
+        let new_process_inner = new_process.inner_mut();
+        let new_task = new_process_inner.get_task_with_tid(0).unwrap().clone();
+        drop(new_process_inner);
 
-    if stack_ptr != 0 {
+        let mut new_task_inner = new_task.inner_mut();
+
+        if stack_ptr != 0 {
+            let trap_cx = new_task_inner.trap_cx_mut();
+            trap_cx.set_sp(stack_ptr);
+        }
+        let new_pid = new_process.pid.0;
+
+        let memory_set = new_process.memory_set.read();
+        let child_token = memory_set.token();
+        drop(memory_set);
+
+        if flags.contains(CloneFlags::PARENT_SETTID) && ptid_ptr as usize != 0 {
+            *translated_mut(current_user_token(), ptid_ptr as *mut u32) = new_pid as u32;
+        }
+        if flags.contains(CloneFlags::CHILD_SETTID) && ctid_ptr as usize != 0 {
+            *translated_mut(child_token, ctid_ptr as *mut u32) = new_pid as u32;
+        }
+        if flags.contains(CloneFlags::CHILD_CLEARTID) && ctid_ptr as usize != 0 {
+            new_task_inner.clear_child_tid = Some(ctid_ptr);
+        }
+
+        // fork / pthread 内部做了
+        // if flags.contains(CloneFlags::SETTLS) {
+        //     let trap_cx = new_task_inner.trap_cx_mut();
+        //     trap_cx.set_tp(tls);
+        // }
+
+        // modify trap context of new_task, because it returns immediately after switching
         let trap_cx = new_task_inner.trap_cx_mut();
-        trap_cx.set_sp(stack_ptr);
-    }
-    let new_pid = new_process.pid.0;
+        // we do not have to move to next instruction since we have done it before
+        // trap_handler 已经将当前进程 Trap 上下文中的 sepc 向后移动了 4 字节，
+        // 使得它回到用户态之后，会从发出系统调用的 ecall 指令的下一条指令开始执行
 
-    let memory_set = new_process.memory_set.read();
-    let child_token = memory_set.token();
-    drop(memory_set);
-
-    if flags.contains(CloneFlags::PARENT_SETTID) {
-        *translated_mut(current_user_token(), ptid as *mut u32) = new_pid as u32;
+        trap_cx.x[10] = 0; // 对于子进程，返回值是0
+        drop(new_task_inner);
+        unsafe {
+            core::arch::asm!("sfence.vma");
+            core::arch::asm!("fence.i");
+        }
+        Ok(new_pid as isize) // 对于父进程，返回值是子进程的 PID
     }
-    if flags.contains(CloneFlags::CHILD_SETTID) {
-        *translated_mut(child_token, ctid as *mut u32) = new_pid as u32;
-    }
-    if flags.contains(CloneFlags::CHILD_CLEARTID) {
-        new_task_inner.clear_child_tid = Some(ctid);
-    }
-    if flags.contains(CloneFlags::SETTLS) {
-        let trap_cx = new_task_inner.trap_cx_mut();
-        trap_cx.set_tp(tls);
-    }
-
-    // modify trap context of new_task, because it returns immediately after switching
-    let trap_cx = new_task_inner.trap_cx_mut();
-    // we do not have to move to next instruction since we have done it before
-    // trap_handler 已经将当前进程 Trap 上下文中的 sepc 向后移动了 4 字节，
-    // 使得它回到用户态之后，会从发出系统调用的 ecall 指令的下一条指令开始执行
-
-    trap_cx.x[10] = 0; // 对于子进程，返回值是0
-    drop(new_task_inner);
-    unsafe {
-        core::arch::asm!("sfence.vma");
-        core::arch::asm!("fence.i");
-    }
-    Ok(new_pid as isize) // 对于父进程，返回值是子进程的 PID
 }
 
 /// #define SYS_execve 221
@@ -363,24 +392,29 @@ pub fn sys_tkill(tid: usize, signal: usize) -> Result {
     if signal == 0 {
         return Ok(0);
     }
-    let pid = if tid == 0 {
-        current_process().pid.0
-    } else {
-        tid
-    };
 
     let signal = 1 << (signal - 1);
     let process = current_process();
     let process_inner = process.inner_mut();
-    if let Some(task) = process_inner.get_task_with_tid(pid) {
+    if let Some(task) = process_inner.get_task_with_tid(tid) {
         if let Some(flag) = SigMask::from_bits(signal) {
+            {
+                let pid = process.pid.0;
+                info!("tkill pid:{:?} tid:{:?} signal:0x{:x?}", pid, tid, signal);
+            }
             task.inner_mut().pending_signals |= flag;
+            {
+                info!(
+                    "tkill pending_signals:0x{:x?}",
+                    task.inner_ref().pending_signals
+                )
+            }
             Ok(0)
         } else {
             return_errno!(Errno::EINVAL, "invalid signal, signum: {}", signal);
         }
     } else {
-        return_errno!(Errno::ESRCH, "could not find task with pid: {}", pid);
+        return_errno!(Errno::ESRCH, "could not find task with pid: {}", tid);
     }
 }
 
@@ -421,15 +455,16 @@ pub fn sys_tgkill(tgid: isize, tid: usize, sig: isize) -> Result {
     };
 
     if let Some(flag) = SigMask::from_bits(sig as usize) {
-        let process_inner = process.inner_mut();
-        for task in process_inner.tasks.iter().filter(|t| t.is_some()) {
-            let task = task.as_ref().unwrap();
-            let mut task_inner = task.inner_mut();
-            task_inner.pending_signals |= flag;
-            drop(task_inner);
-        }
-        drop(process_inner);
-        Ok(0)
+        // let process_inner = process.inner_mut();
+        // for task in process_inner.tasks.iter().filter(|t| t.is_some()) {
+        //     let task = task.as_ref().unwrap();
+        //     let mut task_inner = task.inner_mut();
+        //     task_inner.pending_signals |= flag;
+        //     drop(task_inner);
+        // }
+        // drop(process_inner);
+        // Ok(0)
+        todo!("tgkill")
     } else {
         return_errno!(Errno::EINVAL, "invalid signal, signum: {}", sig);
     }
