@@ -12,6 +12,7 @@ use super::{
     add_task,
     manager::insert_into_pid2process,
     pid::{pid_alloc, PidHandle},
+    processor::current_task,
     signals::{SigAction, MAX_SIGNUM},
     task::{RecycleAllocator, TaskControlBlock, FD_LIMIT},
 };
@@ -324,7 +325,7 @@ impl ProcessControlBlock {
         drop(inner);
         let mut task_inner = task.inner_mut();
         let res = task_inner.res.as_mut().unwrap();
-        res.ustack_top = user_sp;
+        res.ustack_base = user_sp;
         res.alloc_user_res();
         let trap_cx_ppn = res.trap_cx_ppn();
         let user_sp = res.ustack_top();
@@ -353,6 +354,7 @@ impl ProcessControlBlock {
         let mut parent = self.inner_mut();
         assert_eq!(parent.thread_count(), 1);
         // clone parent's memory_set completely including trampoline/ustacks/trap_cxs
+
         // 复制trap_cx和ustack等内存区域均在这里
         // 因此后面不需要再alloc_user_res了
         let memory_set = if flags.contains(CloneFlags::VM) {
@@ -363,16 +365,21 @@ impl ProcessControlBlock {
             )))
         };
 
-        let mut fd_table = Vec::with_capacity(FD_LIMIT);
-        // parent fd table
-        let pfd_table_ref = self.fd_table.read();
-        for fd in pfd_table_ref.iter() {
-            if let Some(file) = fd {
-                fd_table.push(Some(file.clone()));
-            } else {
-                fd_table.push(None);
+        let fd_table = if flags.contains(CloneFlags::FILES) {
+            self.fd_table.clone()
+        } else {
+            let mut new_fd_table = Vec::new();
+            // parent fd table
+            let pfd_table_ref = self.fd_table.read();
+            for fd in pfd_table_ref.iter() {
+                if let Some(file) = fd {
+                    new_fd_table.push(Some(file.clone()));
+                } else {
+                    new_fd_table.push(None);
+                }
             }
-        }
+            Arc::new(RwLock::new(new_fd_table))
+        };
 
         let pid_handle = pid_alloc();
         let tgid = if flags.contains(CloneFlags::THREAD) {
@@ -407,7 +414,7 @@ impl ProcessControlBlock {
             pgid,
             sigactions,
             memory_set,
-            fd_table: Arc::new(RwLock::new(fd_table)),
+            fd_table,
             inner: Arc::new(RwLock::new(ProcessControlBlockInner {
                 parent: Some(Arc::downgrade(self)),
                 children: Vec::with_capacity(10),
@@ -464,6 +471,56 @@ impl ProcessControlBlock {
         child
     }
 
+    pub fn pthread_create(
+        task: Arc<TaskControlBlock>,
+        flags: CloneFlags,
+        stack: usize,
+        newtls: usize,
+    ) -> Arc<TaskControlBlock> {
+        assert!(task.is_main_thread());
+        let process = task.process.upgrade().unwrap();
+        // create a new thread
+        let new_task = Arc::new(TaskControlBlock::new(
+            Arc::clone(&process),
+            task.inner_ref().res.as_ref().unwrap().ustack_base,
+            true,
+        ));
+        let new_task_inner = new_task.inner_ref();
+        let new_task_res = new_task_inner.res.as_ref().unwrap();
+        let new_task_tid = new_task_res.tid;
+
+        let new_task_trap_cx = new_task_inner.trap_cx_mut();
+        // copy trap_cx from the main thread
+        *new_task_trap_cx = (*task.inner_ref().trap_cx_mut()).clone();
+
+        // modify kstack_top in trap_cx of this thread
+        new_task_trap_cx.kernel_sp = task.kstack.top();
+
+        // sys_fork return value ...
+        if stack != 0 {
+            new_task_trap_cx.set_sp(stack);
+        }
+        new_task_trap_cx.x[10] = 0;
+        if flags.contains(CloneFlags::SETTLS) {
+            new_task_trap_cx.x[4] = newtls;
+        }
+        drop(new_task_inner);
+
+        let mut process_inner = process.inner_mut();
+        // add new thread to current process
+        let tasks = &mut process_inner.tasks;
+        while tasks.len() < new_task_tid + 1 {
+            tasks.push(None);
+        }
+        tasks[new_task_tid] = Some(Arc::clone(&new_task));
+        drop(process_inner);
+
+        // add this thread to scheduler
+        add_task(Arc::clone(&new_task));
+
+        new_task
+    }
+
     /// 尝试用时加载缺页，目前只支持mmap缺页
     ///
     /// - 参数：
@@ -486,13 +543,13 @@ impl ProcessControlBlock {
 
         // fork
         let vpn: VirtPageNum = va.floor();
-        let pte = memory_set.translate(vpn);
-        if pte.is_some() && pte.unwrap().is_cow() {
-            let former_ppn = pte.unwrap().ppn();
+        let option = memory_set.translate(vpn);
+        if option.is_some() && option.unwrap().is_cow() {
+            let former_ppn = option.unwrap().ppn();
             return memory_set.cow_alloc(vpn, former_ppn);
         } else {
-            if let Some(pte1) = pte {
-                if pte1.is_valid() {
+            if let Some(pte) = option {
+                if pte.is_valid() {
                     return -4;
                 }
             }
