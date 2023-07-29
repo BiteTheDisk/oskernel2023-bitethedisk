@@ -62,14 +62,16 @@ pub fn check_interval_timer() {
     }
 
     let itimer = inner.interval_timer.as_mut().unwrap();
-    let duration = get_timeval() - itimer.creation_time;
+    let duration = get_timeval() - itimer.last_invoke_time;
     let itime_value = itimer.timer_value;
+    // info!("last time: {:?}", itime_value.it_value - duration);
     // INFO: 现在只处理 ITIMER_REAL
     if duration > itime_value.it_value {
         if itime_value.it_interval == TimeVal::zero() {
             inner.interval_timer = None;
         } else {
             itimer.timer_value.it_value = itimer.timer_value.it_interval;
+            itimer.last_invoke_time = get_timeval();
         }
         inner.pending_signals.set(SigMask::SIGALRM, true);
     }

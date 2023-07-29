@@ -27,7 +27,7 @@ pub use task::FD_LIMIT;
 use crate::{
     consts::SIGNAL_TRAMPOLINE,
     mm::{copyout, memory_set, translated_mut},
-    syscall::impls::futex::futex_wake,
+    syscall::impls::futex::futex_wake, timer::check_interval_timer, trap::trap_return,
 };
 
 use self::{
@@ -38,16 +38,10 @@ use self::{
 
 /// 将当前任务置为就绪态，放回到进程管理器中的就绪队列中，重新选择一个进程运行
 pub fn suspend_current_and_run_next() -> isize {
-    // 取出当前正在执行的任务
+    // TODO: check_interval_timer
+    exec_signal_handlers();
     let task_cp = current_task().unwrap();
     let mut task_inner = task_cp.inner_mut();
-    if task_inner.pending_signals.contains(SigMask::SIGKILL) {
-        let exit_code = task_inner.exit_code;
-        drop(task_inner);
-        drop(task_cp);
-        exit_current_and_run_next(exit_code);
-        return 0;
-    }
     let task = take_current_task().unwrap();
     let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
 
@@ -231,6 +225,7 @@ pub fn exec_signal_handlers() {
                     handler, trap_cx.sepc, trap_cx.x[2]
                 );
                 trap_cx.sepc = handler; // sepc = handler
+                // TODO: directly trap_return
                 return;
             }
         }

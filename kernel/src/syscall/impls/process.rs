@@ -180,53 +180,66 @@ pub fn sys_exec(path: *const u8, mut argv: *const usize, mut envp: *const usize)
 /// ```
 pub fn sys_wait4(pid: isize, exit_code_ptr: *mut i32) -> Result {
     let task = current_task().unwrap();
-
-    let inner = task.inner_mut();
-
-    // 根据pid参数查找有没有符合要求的进程
-    if pid == -1 && inner.children.len() == 0 {
-        return Ok(0);
+    let mut inner = task.inner_mut();
+    if inner.children.len() == 0 {
+        return_errno!(Errno::ECHILD, "no children");
     }
-    if !inner
+    if let Some((idx, _)) = inner
         .children
         .iter()
-        .any(|p| pid == -1 || pid as usize == p.pid())
+        .enumerate()
+        .find(|(_, p)| pid as usize == p.pid())
     {
+        let child = inner.children.remove(idx);
+        assert_eq!(Arc::strong_count(&child), 1);
+
+        // 收集的子进程信息返回
+        let found_pid = child.pid();
+        let exit_code = child.inner_mut().exit_code;
+
+        // 将子进程的退出码写入到当前进程的应用地址空间中
+        if exit_code_ptr as usize != 0 {
+            let memory_set = task.memory_set.read();
+            let token = memory_set.token();
+            *translated_mut(token, exit_code_ptr) = exit_code << 8;
+        }
+        return Ok(found_pid as isize);
+    } else if pid != -1 {
         return_errno!(Errno::ECHILD, "pid {} does not exist", pid);
     }
     drop(inner);
-
     loop {
         let mut inner = task.inner_mut();
+        if inner.children.len() == 0 {
+            return Ok(0);
+        }
         // 查找所有符合PID要求的处于僵尸状态的进程，如果有的话还需要同时找出它在当前进程控制块子进程向量中的下标
-        let pair = inner
+        if let Some((idx, _)) = inner
             .children
             .iter()
             .enumerate()
-            .find(|(_, p)| p.inner_mut().is_zombie() && (pid == -1 || pid as usize == p.pid()));
-        if let Some((idx, _)) = pair {
-            // 将子进程从向量中移除并置于当前上下文中
+            .find(|(_, p)| p.inner_mut().is_zombie())
+        {
             let child = inner.children.remove(idx);
-            // 确认这是对于该子进程控制块的唯一一次强引用，即它不会出现在某个进程的子进程向量中，
-            // 更不会出现在处理器监控器或者任务管理器中。当它所在的代码块结束，这次引用变量的生命周期结束，
-            // 将导致该子进程进程控制块的引用计数变为 0 ，彻底回收掉它占用的所有资源，
-            // 包括：内核栈和它的 PID 还有它的应用地址空间存放页表的那些物理页帧等等
+            if task.pid() == 0 {
+                info!("initproc handling {}", child.pid());
+            }
+
             assert_eq!(Arc::strong_count(&child), 1);
+
             // 收集的子进程信息返回
             let found_pid = child.pid();
             let exit_code = child.inner_mut().exit_code;
-            // ++++ release child PCB
+
             // 将子进程的退出码写入到当前进程的应用地址空间中
             if exit_code_ptr as usize != 0 {
                 let memory_set = task.memory_set.read();
                 let token = memory_set.token();
-                drop(memory_set);
                 *translated_mut(token, exit_code_ptr) = exit_code << 8;
             }
-
-            return Ok(found_pid as isize);
+            drop(inner);
         } else {
-            drop(inner); // 因为下个函数会切换上下文，所以需要手动释放锁
+            drop(inner);
             suspend_current_and_run_next();
         }
     }
@@ -250,6 +263,8 @@ pub fn sys_exit(exit_code: i32) -> ! {
 }
 
 pub fn sys_exit_group(exit_code: i32) -> ! {
+    let pid = current_task().unwrap().pid();
+    info!("task {} exit with exit code {}", pid, exit_code);
     exit_current_and_run_next(exit_code);
     panic!("Unreachable in sys_exit!");
 }

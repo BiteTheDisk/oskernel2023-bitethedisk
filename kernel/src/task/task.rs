@@ -95,15 +95,14 @@ pub struct TaskControlBlockInner {
 
 #[derive(Debug, Clone)]
 pub struct IntervalTimer {
-    /// 定时器创建时间
-    pub creation_time: TimeVal,
+    pub last_invoke_time: TimeVal,
     pub timer_value: itimerval,
 }
 
 impl IntervalTimer {
     pub fn new(timer_value: itimerval) -> Self {
         Self {
-            creation_time: get_timeval(),
+            last_invoke_time: get_timeval(),
             timer_value,
         }
     }
@@ -496,7 +495,7 @@ impl TaskControlBlock {
                 last_enter_smode_time: TimeVal { sec: 0, usec: 0 },
                 clear_child_tid: 0,
                 trap_cause: None,
-                interval_timer: parent_inner.interval_timer.clone(),
+                interval_timer: None,
             }),
         });
 

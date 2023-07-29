@@ -579,10 +579,18 @@ pub fn sys_write(fd: i32, buf: *const u8, len: usize) -> Result {
 
         let write_size =
             file.write(UserBuffer::wrap(translated_bytes_buffer(token, buf, len))) as isize;
-        Ok(write_size)
-    } else {
-        return_errno!(Errno::EBADF, "fd is not found, fd: {}", fd);
+
+        if write_size < 0 {
+            if file.name() == "pipe" {
+                return_errno!(Errno::EPIPE);
+            } else {
+                return_errno!(Errno::UNCLEAR, "fd {} write size is {}", fd, write_size);
+            }
+        } else {
+            return Ok(write_size);
+        }
     }
+    return_errno!(Errno::EBADF, "fd is not found, fd: {}", fd);
 }
 
 pub fn sys_pwrite64(fd: i32, buf: *const u8, len: usize, offset: usize) -> Result {

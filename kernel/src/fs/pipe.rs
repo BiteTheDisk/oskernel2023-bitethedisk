@@ -57,6 +57,7 @@ pub struct PipeRingBuffer {
     tail: usize,
     status: RingBufferStatus,
     write_end: Option<Weak<Pipe>>,
+    read_end: Option<Weak<Pipe>>,
 }
 
 impl PipeRingBuffer {
@@ -67,10 +68,14 @@ impl PipeRingBuffer {
             tail: 0,
             status: RingBufferStatus::Empty,
             write_end: None,
+            read_end: None,
         }
     }
     pub fn set_write_end(&mut self, write_end: &Arc<Pipe>) {
         self.write_end = Some(Arc::downgrade(write_end));
+    }
+    pub fn set_read_end(&mut self, read_end: &Arc<Pipe>) {
+        self.read_end = Some(Arc::downgrade(read_end));
     }
     /// 写一个字节到管道尾
     pub fn write_byte(&mut self, byte: u8) {
@@ -113,6 +118,9 @@ impl PipeRingBuffer {
     pub fn all_write_ends_closed(&self) -> bool {
         self.write_end.as_ref().unwrap().upgrade().is_none()
     }
+    pub fn all_read_ends_closed(&self) -> bool {
+        self.read_end.as_ref().unwrap().upgrade().is_none()
+    }
 }
 
 /// 创建一个管道并返回管道的读端和写端 (read_end, write_end)
@@ -120,8 +128,9 @@ pub fn make_pipe() -> (Arc<Pipe>, Arc<Pipe>) {
     let buffer = Arc::new(Mutex::new(PipeRingBuffer::new()));
     let read_end = Arc::new(Pipe::read_end_with_buffer(buffer.clone()));
     let write_end = Arc::new(Pipe::write_end_with_buffer(buffer.clone()));
-    buffer.lock().set_write_end(&write_end);
-
+    let mut buf_lck = buffer.lock();
+    buf_lck.set_write_end(&write_end);
+    buf_lck.set_read_end(&read_end);
     (read_end, write_end)
 }
 
@@ -174,6 +183,9 @@ impl File for Pipe {
             let mut ring_buffer = self.buffer.lock();
             let loop_write = ring_buffer.available_write();
             if loop_write == 0 {
+                if ring_buffer.all_read_ends_closed() {
+                    return usize::MAX; // -1
+                }
                 drop(ring_buffer);
                 if suspend_current_and_run_next() < 0 {
                     return write_size;
@@ -234,6 +246,9 @@ impl File for Pipe {
             let mut ring_buffer = self.buffer.lock();
             let loop_write = ring_buffer.available_write();
             if loop_write == 0 {
+                if ring_buffer.all_read_ends_closed() {
+                    return usize::MAX; // -1
+                }
                 drop(ring_buffer);
                 if suspend_current_and_run_next() < 0 {
                     return write_size;
