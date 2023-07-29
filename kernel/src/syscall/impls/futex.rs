@@ -136,13 +136,13 @@ pub fn futex_wait(uaddr: usize, val: u32, timeout: usize) -> Result {
     drop(task);
     // warning: Auto waking-up has not been implemented yet
 
-    // {
-    //     info!("futex_wait: block_current_and_run_next");
-    //     let process = current_process();
-    //     let pid = process.pid();
-    //     let tid = current_task().unwrap().inner_ref().tid();
-    //     info!("futex_wait: pid: {}, tid: {}", pid, tid);
-    // }
+    {
+        info!("futex_wait: block_current_and_run_next");
+        let process = current_process();
+        let pid = process.pid();
+        let tid = current_task().unwrap().inner_ref().tid();
+        info!("futex_wait: pid: {}, tid: {}", pid, tid);
+    }
 
     block_current_and_run_next();
 
@@ -153,7 +153,7 @@ pub fn futex_wait(uaddr: usize, val: u32, timeout: usize) -> Result {
         return Err(Errno::EINTR);
     }
 
-    // info!("exit futex_wait");
+    info!("exit futex_wait");
 
     Ok(0)
 }

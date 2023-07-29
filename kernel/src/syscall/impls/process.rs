@@ -61,7 +61,6 @@ pub fn sys_do_fork(
     let flags = CloneFlags::from_bits(flags & !0xff).unwrap();
 
     if flags.contains(CloneFlags::THREAD) {
-        info!("do_fork: clone thread");
         let current_task = current_task().unwrap().clone();
         let new_task = ProcessControlBlock::pthread_create(current_task, flags, stack_ptr, tls);
         let mut new_task_inner = new_task.inner_mut();
@@ -398,17 +397,7 @@ pub fn sys_tkill(tid: usize, signal: usize) -> Result {
     let process_inner = process.inner_mut();
     if let Some(task) = process_inner.get_task_with_tid(tid) {
         if let Some(flag) = SigMask::from_bits(signal) {
-            {
-                let pid = process.pid.0;
-                info!("tkill pid:{:?} tid:{:?} signal:0x{:x?}", pid, tid, signal);
-            }
             task.inner_mut().pending_signals |= flag;
-            {
-                info!(
-                    "tkill pending_signals:0x{:x?}",
-                    task.inner_ref().pending_signals
-                )
-            }
             Ok(0)
         } else {
             return_errno!(Errno::EINVAL, "invalid signal, signum: {}", signal);
@@ -652,9 +641,9 @@ pub fn sys_sched_setscheduler(pid: usize, policy: isize, param: *const SchedPara
     let process = pid2process(pid).ok_or(Errno::UNCLEAR)?;
     let inner = process.inner_ref();
 
-    {
-        info!("sched_setscheduler: pid: {}, policy: {}", pid, policy);
-    }
+    // {
+    //     info!("sched_setscheduler: pid: {}, policy: {}", pid, policy);
+    // }
     // let user_param = translated_ref(token, param);
     // inner.policy = policy as u8;
     // inner.priority = user_param.get_priority();
@@ -745,8 +734,8 @@ pub fn sys_sigreturn() -> Result {
 // ```
 pub fn sys_sigaction(signum: isize, act: *const SigAction, oldact: *mut SigAction) -> Result {
     let token = current_user_token();
-    let task = current_process();
-    let mut inner = task.inner_mut();
+    let process = current_process();
+    let mut inner = process.inner_mut();
     let signum = signum as u32;
 
     // signum 超出范围，返回错误
@@ -761,7 +750,7 @@ pub fn sys_sigaction(signum: isize, act: *const SigAction, oldact: *mut SigActio
     // 当 sigaction 存在时， 在 pcb 中注册给定的 signaction
 
     if act as usize != 0 {
-        let mut sigaction = task.sigactions.write();
+        let mut sigaction = process.sigactions.write();
         if oldact as usize != 0 {
             *translated_mut(token, oldact) = sigaction[signum as usize];
         }
