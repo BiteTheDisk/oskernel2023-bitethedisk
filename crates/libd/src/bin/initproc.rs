@@ -22,7 +22,7 @@ fn main() -> isize {
         );
     } else {
         let mut exit_code = 0_i32;
-        let res = waitpid(pid as usize, &mut exit_code);
+        let res = waitpid(-1, &mut exit_code);
         println!("child proc exit_code: {}", exit_code);
         println!("waitpid result: {}", res);
     }
