@@ -58,7 +58,7 @@ pub fn meow() -> ! {
         init_bss();
         unsafe { set_fs(FS::Dirty) }
         lang_items::setup();
-        logging::init();
+        // logging::init();
         mm::init();
         trap::init();
         trap::enable_stimer_interrupt();
