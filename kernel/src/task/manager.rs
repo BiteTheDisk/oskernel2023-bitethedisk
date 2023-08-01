@@ -1,7 +1,6 @@
 use crate::syscall::impls::FUTEX_QUEUE;
-use crate::timer::{get_time_ms, get_time_ns};
+use crate::timer::get_time_ns;
 use alloc::vec::Vec;
-use sync_cell::SyncRefCell;
 
 use super::TaskControlBlock;
 use alloc::collections::{BTreeMap, BinaryHeap, VecDeque};
@@ -144,7 +143,7 @@ impl TaskManager {
 }
 
 lazy_static! {
-    pub static ref TASK_MANAGER: SyncRefCell<TaskManager> = SyncRefCell::new(TaskManager::new());
+    pub static ref TASK_MANAGER: Mutex<TaskManager> = Mutex::new(TaskManager::new());
     pub static ref PID2TCB: Mutex<BTreeMap<usize, Arc<TaskControlBlock>>> =
         Mutex::new(BTreeMap::new());
 }
@@ -152,24 +151,24 @@ lazy_static! {
 /// 将一个任务加入到全局 `FIFO 任务管理器` `TASK_MANAGER` 就绪队列的队尾
 pub fn add_task(task: Arc<TaskControlBlock>) {
     PID2TCB.lock().insert(task.pid(), Arc::clone(&task));
-    TASK_MANAGER.borrow_mut().add(task);
+    TASK_MANAGER.lock().add(task);
 }
 
 /// 从全局变量 `TASK_MANAGER` 就绪队列的队头中取出一个任务
 pub fn fetch_task() -> Option<Arc<TaskControlBlock>> {
-    TASK_MANAGER.borrow_mut().fetch()
+    TASK_MANAGER.lock().fetch()
 }
 
 pub fn check_hanging() -> Option<Arc<TaskControlBlock>> {
-    TASK_MANAGER.borrow_mut().check_hanging()
+    TASK_MANAGER.lock().check_hanging()
 }
 
 pub fn check_futex_interupt_or_expire() -> Option<Arc<TaskControlBlock>> {
-    TASK_MANAGER.borrow_mut().check_futex_interupt_or_expire()
+    TASK_MANAGER.lock().check_futex_interupt_or_expire()
 }
 
 pub fn unblock_task(task: Arc<TaskControlBlock>) {
-    let mut manager = TASK_MANAGER.borrow_mut();
+    let mut manager = TASK_MANAGER.lock();
     let p = manager
         .waiting_queue
         .iter()
@@ -184,7 +183,7 @@ pub fn unblock_task(task: Arc<TaskControlBlock>) {
 }
 
 pub fn block_task(task: Arc<TaskControlBlock>) {
-    TASK_MANAGER.borrow_mut().block(task);
+    TASK_MANAGER.lock().block(task);
 }
 
 /// 通过PID获取对应的进程控制块

@@ -2,7 +2,6 @@ use core::fmt::Debug;
 use core::fmt::{self, Formatter};
 
 use alloc::vec::Vec;
-use nix::time::TimeSpec;
 
 use crate::mm::UserBuffer;
 

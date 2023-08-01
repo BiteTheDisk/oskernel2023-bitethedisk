@@ -1,5 +1,6 @@
 pub mod address; // 地址数据类型
 pub mod frame_allocator; // 物理页帧管理器
+pub mod kernel_heap_allocator;
 pub mod kernel_vmm;
 pub mod memory_set; // 地址空间模块
 pub mod page_table; // 页表
@@ -10,14 +11,13 @@ mod vma; // 虚拟内存地址映射空间
 use core::{cmp::min, mem::size_of};
 
 pub use address::*;
-use alloc::{string::String, vec::Vec};
+use alloc::{slice, string::String, vec::Vec};
 pub use frame_allocator::{alloc_frame, dealloc_frame, FrameTracker};
 pub use memory_set::{MapPermission, MemorySet};
 pub use page_table::{PTEFlags, PageTable, PageTableEntry};
 use riscv::register::satp;
 pub use user_buffer::{UserBuffer, UserBufferIterator};
 pub use vma::*;
-// pub use shared_memory::*;
 
 use crate::{consts::PAGE_SIZE, task::current_task};
 
@@ -25,8 +25,24 @@ use self::{address::Step, kernel_vmm::acquire_kvmm};
 
 /// 内存管理子系统的初始化
 pub fn init() {
+    init_bss();
+    kernel_heap_allocator::init();
     init_frame_allocator();
     enable_mmu();
+}
+
+fn init_bss() {
+    extern "C" {
+        fn ekstack0();
+        fn ebss();
+    }
+    unsafe {
+        let sbss = ekstack0 as usize as *mut u8;
+        let ebss = ebss as usize as *mut u8;
+        slice::from_mut_ptr_range(sbss..ebss)
+            .into_iter()
+            .for_each(|byte| (byte as *mut u8).write_volatile(0));
+    }
 }
 
 pub fn init_frame_allocator() {

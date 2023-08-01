@@ -21,17 +21,16 @@ pub static mut BOOTED: AtomicBool = core::sync::atomic::AtomicBool::new(false);
 /// ```
 ///
 /// 保证对 [`BOOTED`] 的 `读` 发生在对其的 `写` 之后
-macro_rules! synchronize_hart {
+macro_rules! toggle_booted {
     () => {{
         unsafe {
-            $crate::macros::on_boot::BOOTED.store(true, core::sync::atomic::Ordering::Relaxed);
-            core::arch::asm!("fence");
+            $crate::macros::on_boot::BOOTED.store(true, core::sync::atomic::Ordering::Release);
         }
     }};
 }
 
 /// 循环 `读` 内核资源初始化完成标记变量 [`BOOTED`]，直到其变为 `true`
-macro_rules! wait_for_booting {
+macro_rules! synchronize_hart {
     () => {{
         unsafe {
             while !$crate::macros::on_boot::BOOTED.load(core::sync::atomic::Ordering::Acquire) {}

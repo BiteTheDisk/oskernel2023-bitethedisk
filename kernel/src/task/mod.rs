@@ -26,13 +26,12 @@ pub use task::FD_LIMIT;
 
 use crate::{
     consts::SIGNAL_TRAMPOLINE,
-    mm::{copyout, memory_set, translated_mut},
+    mm::{copyout, translated_mut},
     syscall::impls::futex::futex_wake,
-    timer::check_interval_timer,
 };
 
 use self::{
-    initproc::{BUSYBOX, INITPROC},
+    initproc::INITPROC,
     manager::block_task,
     processor::{acquire_processor, schedule, take_cancelled_chiled_thread},
 };
@@ -62,8 +61,10 @@ pub fn suspend_current_and_run_next() -> isize {
 
 pub fn exit_current_and_run_next(exit_code: i32) {
     let task = take_current_task().unwrap();
-
     let pid = task.pid();
+
+    crate::console::print_buffer(pid);
+
     let token = task.token();
     let is_child_thread = task.is_child_thread();
 
@@ -154,7 +155,6 @@ pub fn add_initproc() {
 
 pub fn exec_signal_handlers() {
     let task = current_task().unwrap();
-    let pid = task.pid();
     let mut task_inner = task.inner_mut();
 
     if task_inner.pending_signals == SigSet::empty() {

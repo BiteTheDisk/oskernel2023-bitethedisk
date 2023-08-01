@@ -1,7 +1,6 @@
 //! 根据 SYS_id 分发具体系统调用
 
-use crate::fs::fdset::PollFd;
-use crate::task::{SigAction, SigMask, SigSet};
+use crate::task::{SigAction, SigMask};
 
 use super::impls::*;
 use nix::RLimit;
@@ -462,7 +461,6 @@ pub fn syscall(syscall_id: usize, args: [usize; 6]) -> isize {
 
         _ => panic!("unsupported syscall, syscall id: {:?}", syscall_id),
     };
-    use crate::task::current_task;
     // println!(
     //     "[DEBUG] syscall end pid:{:?}",
     //     current_task().unwrap().pid.0,

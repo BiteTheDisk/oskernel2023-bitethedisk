@@ -46,7 +46,7 @@ impl Processor {
 
     pub fn hang_current(&mut self, sleep_time: usize, duration: usize) {
         TASK_MANAGER
-            .borrow_mut()
+            .lock()
             .hang(sleep_time, duration, self.take_current().unwrap());
     }
 }
