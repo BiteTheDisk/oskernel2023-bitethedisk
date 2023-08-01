@@ -11,13 +11,24 @@ use libd::{
     syscall::{exec, execve, exit, fork, sys_exec, waitpid},
 };
 
+macro_rules! get_env {
+    () => {
+        [
+            "./busybox\0".as_ptr(),
+            "sh\0".as_ptr(),
+            "test_all2.sh\0".as_ptr(),
+        ]
+        .as_ptr() as *const i8
+    };
+}
+
 #[no_mangle]
 fn main() -> isize {
     let pid = fork();
     if pid == 0 {
         execve(
             "./busybox\0".as_ptr() as *const i8,
-            ["./busybox\0".as_ptr(), "sh\0".as_ptr(), "test_all.sh\0".as_ptr()].as_ptr() as *const i8,
+            get_env!(),
             ["PATH=/\0".as_ptr()].as_ptr() as *const i8,
         );
     } else {

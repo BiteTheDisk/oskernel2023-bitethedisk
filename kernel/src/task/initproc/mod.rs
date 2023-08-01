@@ -1,7 +1,7 @@
 use core::arch::global_asm;
 
 use alloc::{borrow::ToOwned, sync::Arc, vec::Vec};
-use spin::RwLock;
+use spin::{Mutex, RwLock};
 
 use crate::{
     fs::{self, open_flags::CreateMode, AbsolutePath, OpenFlags},
@@ -74,4 +74,33 @@ impl Busybox {
         let mut write = self.inner.memory_set.write();
         MemorySet::from_copy_on_write(&mut write)
     }
+}
+
+pub fn preload() {
+    let bb = BUSYBOX.read();
+    drop(bb);
+}
+
+pub fn setup_test_all2() {
+    let test_all2 = TEST_ALL2.lock();
+    drop(test_all2);
+}
+
+lazy_static! {
+    pub static ref TEST_ALL2: Mutex<()> = Mutex::new({
+        extern "C" {
+            fn test_all2_entry();
+            fn test_all2_tail();
+        }
+        let entry = test_all2_entry as usize;
+        let tail = test_all2_tail as usize;
+        let siz = tail - entry;
+
+        let initproc = unsafe { core::slice::from_raw_parts(entry as *const u8, siz) };
+        let path = AbsolutePath::from_str("/test_all2.sh");
+
+        let inode =
+            fs::open(path, OpenFlags::O_CREATE, CreateMode::empty()).expect("no test_all2.sh");
+        inode.write_all(&initproc.to_owned());
+    });
 }
