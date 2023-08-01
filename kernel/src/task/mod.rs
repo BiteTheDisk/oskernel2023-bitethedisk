@@ -183,10 +183,10 @@ pub fn exec_signal_handlers() {
             }
             SIG_DFL => {
                 if signum == Signal::SIGKILL as u32 || signum == Signal::SIGSEGV as u32 {
-                    println!(
-                        "[Kernel] task/mod(exec_signal_handlers) pid:{} signal_num:{}, SIG_DFL kill process",
-                        pid, signum
-                    );
+                    // println!(
+                    //     "[Kernel] task/mod(exec_signal_handlers) pid:{} signal_num:{}, SIG_DFL kill process",
+                    //     pid, signum
+                    // );
                     drop(task_inner);
                     drop(task);
                     exit_current_and_run_next(-(signum as i32));
