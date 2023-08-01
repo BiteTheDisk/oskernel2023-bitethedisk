@@ -10,6 +10,8 @@ use sync_cell::SyncRefCell;
 /// 在单核环境下，我们仅创建单个 Processor 的全局实例 PROCESSOR
 pub static mut PROCESSOR: SyncRefCell<Processor> = SyncRefCell::new(Processor::new());
 
+pub static mut PROCESSOR2: SyncRefCell<Processor> = SyncRefCell::new(Processor::new());
+
 /// 每个核上的处理器，负责运行一个进程
 pub struct Processor {
     /// 当前处理器上正在执行的任务
@@ -59,4 +61,8 @@ impl Default for Processor {
 
 pub fn acquire_processor<'a>() -> RefMut<'a, Processor> {
     unsafe { PROCESSOR.borrow_mut() }
+}
+
+pub fn acquire_processor2<'a>() -> RefMut<'a, Processor> {
+    unsafe { PROCESSOR2.borrow_mut() }
 }

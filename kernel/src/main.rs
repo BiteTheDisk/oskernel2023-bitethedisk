@@ -73,7 +73,7 @@ pub fn meow() -> ! {
         trap::init();
         trap::enable_stimer_interrupt();
         timer::set_next_trigger();
-        task::run_tasks();
+        task::run_tasks2();
     }
 
     unreachable!("main.rs/meow: you should not be here!");

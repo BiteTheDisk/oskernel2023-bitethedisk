@@ -5,6 +5,7 @@
 //! [`Processor`] 是一个物理上的计算单元，和一个具体的 [`cpu::Cpu`] 绑定，
 //! 它事实上负责进程 [`TaskControlBlock`] 的运行和进程上下文 [`TaskContext`] 的切换
 
+pub mod cpu;
 pub mod processor;
 pub mod schedule;
 
@@ -12,7 +13,7 @@ use alloc::sync::Arc;
 pub use processor::*;
 pub use schedule::*;
 
-use crate::{mm::memory_set, trap::TrapContext};
+use crate::trap::TrapContext;
 
 use super::{
     manager::CHILDREN_THREAD_MONITOR, switch::__switch, task::TaskControlBlock, TaskContext,
