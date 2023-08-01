@@ -16,7 +16,7 @@ macro_rules! get_env {
         [
             "./busybox\0".as_ptr(),
             "sh\0".as_ptr(),
-            "test_all2.sh\0".as_ptr(),
+            // "test_all2.sh\0".as_ptr(),
         ]
         .as_ptr() as *const i8
     };
