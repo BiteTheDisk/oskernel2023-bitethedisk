@@ -12,25 +12,21 @@ use core::ops::{Deref, DerefMut};
 pub struct AbsolutePath {
     pub components: VecDeque<String>,
 }
-
 impl From<&str> for AbsolutePath {
     fn from(s: &str) -> Self {
         Self::from_str(s)
     }
 }
-
 impl From<String> for AbsolutePath {
     fn from(s: String) -> Self {
         Self::from_string(s)
     }
 }
-
 impl From<Vec<&str>> for AbsolutePath {
     fn from(s: Vec<&str>) -> Self {
         Self::from_vec_str(s)
     }
 }
-
 impl Deref for AbsolutePath {
     type Target = VecDeque<String>;
 
@@ -167,26 +163,3 @@ impl Debug for AbsolutePath {
         Ok(())
     }
 }
-
-// #[allow(unused)]
-// pub fn path_test() {
-//     let path = AbsolutePath::from_string(String::from("/a/b/c/d/"));
-//     println!("path = {:?}", path);
-//     let path = AbsolutePath::from_string(String::from("/abcdefg/asdsd/asdasd"));
-//     println!("path = {:?}", path);
-//     let path = AbsolutePath::from_string(String::from("aa/../bb/../cc/././."));
-//     println!("path = {:?}", path);
-//     let path = AbsolutePath::from_string(String::from("aa/../.."));
-//     println!("path = {:?}", path);
-//     let path = AbsolutePath::from_string(String::from("./././."));
-//     println!("path = {:?}", path);
-//     // test cd
-//     let abs_path = AbsolutePath::from_string(String::from("/a/b/c/d/"));
-//     let path = String::from("../e/../f/g");
-//     let new_path = abs_path.cd(path).unwrap();
-//     println!("new_path = {:?}", new_path);
-//     // test join
-//     let abs_path = AbsolutePath::from_string(String::from("/a/b/c/d/"));
-//     let new_path = abs_path.join_string(String::from("../e/../f/g"));
-//     println!("new_path = {:?}", new_path);
-// }
