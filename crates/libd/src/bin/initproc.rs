@@ -15,9 +15,19 @@ use libd::{
 fn main() -> isize {
     let pid = fork();
     if pid == 0 {
+        // execve(
+        //     "./busybox\0".as_ptr() as *const i8,
+        //     ["./busybox\0".as_ptr(), "sh\0".as_ptr()].as_ptr() as *const i8,
+        //     ["PATH=/\0".as_ptr()].as_ptr() as *const i8,
+        // );
         execve(
             "./busybox\0".as_ptr() as *const i8,
-            ["./busybox\0".as_ptr(), "sh\0".as_ptr()].as_ptr() as *const i8,
+            [
+                "./busybox\0".as_ptr(),
+                "sh\0".as_ptr(),
+                "test_all.sh\0".as_ptr(),
+            ]
+            .as_ptr() as *const i8,
             ["PATH=/\0".as_ptr()].as_ptr() as *const i8,
         );
     } else {

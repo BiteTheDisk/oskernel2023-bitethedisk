@@ -127,6 +127,8 @@ pub const SYS_SETSOCKOPT: usize = 208;
 pub const SYS_TIMER_SETTIME: usize = 110;
 pub const SYS_TIMER_GETOVERRUN: usize = 109;
 
+pub const SYS_MREMMAP: usize = 216;
+
 #[allow(unused)]
 pub fn syscall_name(id: usize) -> &'static str {
     match id {
@@ -212,6 +214,8 @@ pub fn syscall_name(id: usize) -> &'static str {
         SYS_GETRANDOM => "SYS_GETRANDOM",
         SYS_SCHED_SETAFFINITY => "SYS_SCHED_SETAFFINITY",
         SYS_CLOCK_NANOSLEEP => "SYS_CLOCK_NANOSLEEP",
+
+        SYS_MREMMAP => "SYS_MREMMAP",
 
         _ => "unknown",
     }
@@ -456,6 +460,8 @@ pub fn syscall(syscall_id: usize, args: [usize; 6]) -> isize {
 
         // SYS_TIMER_GETOVERRUN => sys_timer_getoverrun(args[0] as usize),
         SYS_TIMER_GETOVERRUN => Ok(0),
+
+        SYS_MREMMAP => Ok(0),
 
         _ => panic!("unsupported syscall, syscall id: {:?}", syscall_id),
     };

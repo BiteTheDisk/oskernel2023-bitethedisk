@@ -1,18 +1,17 @@
-use crate::fs::fino_alloc;
-use crate::fs::FInoHandle;
 use crate::fs::File;
+use crate::fs::KFile;
 use crate::fs::{CharFile, DeviceFile};
 use alloc::string::String;
 use alloc::string::ToString;
 
 #[derive(Debug)]
-pub struct SDA2 {
-    fid: FInoHandle,
-}
+pub struct SDA2Inner {}
 
-impl SDA2 {
+pub type SDA2 = KFile<SDA2Inner>;
+
+impl SDA2Inner {
     pub fn new() -> Self {
-        Self { fid: fino_alloc() }
+        Self {}
     }
 }
 
@@ -26,6 +25,6 @@ impl File for SDA2 {
     }
 
     fn ino(&self) -> usize {
-        self.fid.get()
+        self.inner.lock().fid.get()
     }
 }

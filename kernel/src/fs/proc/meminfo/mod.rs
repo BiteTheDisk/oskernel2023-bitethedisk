@@ -1,16 +1,14 @@
-use crate::fs::fino_alloc;
-use crate::fs::FInoHandle;
 use crate::fs::File;
+use crate::fs::KFile;
 use alloc::string::String;
 use alloc::string::ToString;
 #[derive(Debug)]
-pub struct MemInfo {
-    fid: FInoHandle,
-}
+pub struct MemInfoInner {}
+pub type MemInfo = KFile<MemInfoInner>;
 
-impl MemInfo {
+impl MemInfoInner {
     pub fn new() -> Self {
-        Self { fid: fino_alloc() }
+        Self {}
     }
 }
 
@@ -20,6 +18,6 @@ impl File for MemInfo {
     }
 
     fn ino(&self) -> usize {
-        self.fid.get()
+        self.inner.lock().fid.get()
     }
 }

@@ -17,6 +17,8 @@ use alloc::sync::Arc;
 
 use crate::fs::{CreateMode, Dirent, FileType};
 
+use super::KFile;
+
 pub struct ProcFS {
     pub id: FSIDHandle,
     pub mount_path: AbsolutePath,
@@ -25,7 +27,6 @@ pub struct ProcFS {
 #[derive(Debug)]
 pub struct ProcDir {
     fid: FSIDHandle,
-
     index: Mutex<usize>,
     dirents: Vec<Dirent>,
 }
@@ -34,7 +35,6 @@ impl ProcDir {
     pub fn new() -> Self {
         Self {
             fid: fsid_alloc(),
-
             index: Mutex::new(0),
             dirents: vec![
                 Dirent::new("meminfo", 0, 0, FileType::RegularFile),
@@ -55,29 +55,27 @@ impl File for ProcDir {
     fn open(
         &self,
         path: AbsolutePath,
-        _flags: OpenFlags,
+        flags: OpenFlags,
         _mode: CreateMode,
     ) -> Result<Arc<dyn File>, Errno> {
         match path.name().as_str() {
             "/" => Ok(Arc::new(ProcDir::new())),
-            "meminfo" => Ok(Arc::new(MemInfo::new())),
-            "mounts" => Ok(Arc::new(Mounts::new())),
+            "meminfo" => Ok(Arc::new(MemInfo::new(
+                Arc::new(MemInfoInner::new()),
+                path,
+                flags,
+            ))),
+            "mounts" => Ok(Arc::new(Mounts::new(
+                Arc::new(MountsInner::new()),
+                path,
+                flags,
+            ))),
             _ => Err(Errno::ENOENT),
         }
     }
 
-    // fn all_dirents(&self) -> Option<Vec<Dirent>> {
-    //     let mut dirents = Vec::new();
-    //     // dirents.push(Dirent::new("meminfo", 0, 0, FileType::RegularFile));
-    //     // dirents.push(Dirent::new("mounts", 0, 0, FileType::RegularFile));
-    //     dirents = self.dirents.clone();
-    //     Some(dirents)
-    // }
-
     fn ls_with_attr(&self) -> Vec<(String, u32)> {
         let mut vec = Vec::new();
-        // vec.push(("meminfo".to_string(), S_IFREG));
-        // vec.push(("mounts".to_string(), S_IFREG));
         for dirent in self.dirents.iter() {
             vec.push(dirent.info());
         }

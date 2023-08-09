@@ -1,18 +1,16 @@
-use crate::fs::fino_alloc;
-use crate::fs::FInoHandle;
 use crate::fs::File;
+use crate::fs::KFile;
 use crate::mm::UserBuffer;
 use alloc::string::String;
 use alloc::string::ToString;
 
-#[derive(Debug)]
-pub struct Mounts {
-    fid: FInoHandle,
-}
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MountsInner;
+pub type Mounts = KFile<MountsInner>;
 
-impl Mounts {
+impl MountsInner {
     pub fn new() -> Self {
-        Self { fid: fino_alloc() }
+        Self {}
     }
 }
 
@@ -34,6 +32,11 @@ impl File for Mounts {
     }
 
     fn ino(&self) -> usize {
-        self.fid.get()
+        self.inner.lock().fid.get()
+    }
+
+    // TODO lzm
+    fn offset(&self) -> usize {
+        self.inner.lock().offset
     }
 }

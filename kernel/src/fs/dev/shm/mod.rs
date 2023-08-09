@@ -1,16 +1,18 @@
-use crate::fs::{fino_alloc, CreateMode, Dirent, FInoHandle, File, OpenFlags};
+use crate::fs::{dirent, fino_alloc, CreateMode, Dirent, FInoHandle, File, OpenFlags};
 use crate::syscall::impls::Errno;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::{string::String, vec::Vec};
+use dirent::FileType;
 use path::AbsolutePath;
 use spin::Mutex;
+
+use super::{DevFile, DevFileInner};
 
 #[derive(Debug)]
 pub struct ShmDir {
     index: Mutex<usize>,
-    dirents: Vec<Dirent>,
-
+    dirents: Mutex<Vec<Dirent>>,
     fid: FInoHandle,
 }
 
@@ -18,7 +20,7 @@ impl ShmDir {
     pub fn new() -> Self {
         Self {
             index: Mutex::new(0),
-            dirents: Vec::new(),
+            dirents: Mutex::new(vec![]),
             fid: fino_alloc(),
         }
     }
@@ -29,6 +31,20 @@ impl ShmDir {
 
     pub fn step(&self) {
         *self.index.lock() += 1;
+    }
+
+    pub fn add_dirent(&self, dirent: Dirent) {
+        self.dirents.lock().push(dirent);
+    }
+
+    pub fn remove_dirent(&self, name: &str) {
+        let mut dirents = self.dirents.lock();
+        for (i, dirent) in dirents.iter().enumerate() {
+            if dirent.name() == name {
+                dirents.remove(i);
+                return;
+            }
+        }
     }
 }
 
@@ -42,12 +58,20 @@ impl File for ShmDir {
     fn open(
         &self,
         path: AbsolutePath,
-        _flags: OpenFlags,
+        flags: OpenFlags,
         _mode: CreateMode,
     ) -> Result<Arc<dyn File>, Errno> {
         match path.name().as_str() {
             "/" => Ok(Arc::new(ShmDir::new())),
-            _ => Err(Errno::ENOENT),
+            _ => {
+                let dirents = Dirent::new(path.name().as_str(), 0, 0, FileType::UNKNOWN);
+                self.add_dirent(dirents);
+                Ok(Arc::new(DevFile::new(
+                    Arc::new(DevFileInner::new()),
+                    path,
+                    flags,
+                )))
+            }
         }
     }
 
@@ -57,8 +81,9 @@ impl File for ShmDir {
 
     fn dirent(&self, dirent: &mut Dirent) -> isize {
         let index = self.index();
-        if index < self.dirents.len() {
-            *dirent = self.dirents[index].clone();
+        let dirents = self.dirents.lock();
+        if index < dirents.len() {
+            *dirent = dirents[index].clone();
             self.step();
             core::mem::size_of::<Dirent>() as isize
         } else {
@@ -68,7 +93,8 @@ impl File for ShmDir {
 
     fn ls_with_attr(&self) -> Vec<(String, u32)> {
         let mut vec = Vec::new();
-        for dirent in self.dirents.iter() {
+        let dirents = self.dirents.lock();
+        for dirent in dirents.iter() {
             vec.push(dirent.info());
         }
         vec

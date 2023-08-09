@@ -1,17 +1,16 @@
 use alloc::string::String;
 use alloc::string::ToString;
 
-use crate::fs::fino_alloc;
-use crate::fs::FInoHandle;
 use crate::fs::File;
+use crate::fs::KFile;
 #[derive(Debug)]
-pub struct TTY {
-    fid: FInoHandle,
-}
+pub struct TTYInner {}
 
-impl TTY {
+pub type TTY = KFile<TTYInner>;
+
+impl TTYInner {
     pub fn new() -> Self {
-        Self { fid: fino_alloc() }
+        Self {}
     }
 }
 
@@ -27,7 +26,7 @@ impl File for TTY {
     fn set_cloexec(&self) {}
 
     fn ino(&self) -> usize {
-        self.fid.get()
+        self.inner.lock().fid.get()
     }
 }
 

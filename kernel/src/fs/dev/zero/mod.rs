@@ -1,17 +1,17 @@
-use crate::fs::{fino_alloc, FInoHandle, File, Kstat, S_IFCHR, S_IFREG};
+use crate::fs::{File, KFile, Kstat, S_IFCHR};
 
 use alloc::string::ToString;
 use alloc::{string::String, vec::Vec};
 
 // 成员待完善
 #[derive(Debug)]
-pub struct Zero {
-    fid: FInoHandle,
-}
+pub struct ZeroInner {}
 
-impl Zero {
+pub type Zero = KFile<ZeroInner>;
+
+impl ZeroInner {
     pub fn new() -> Self {
-        Self { fid: fino_alloc() }
+        Self {}
     }
 }
 impl File for Zero {
@@ -36,7 +36,7 @@ impl File for Zero {
     }
 
     fn ino(&self) -> usize {
-        self.fid.get()
+        self.inner.lock().fid.get()
     }
 
     fn fstat(&self, kstat: &mut Kstat) {

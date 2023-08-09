@@ -1,10 +1,11 @@
-pub mod misc;
-pub mod null;
-pub mod sda2;
+mod misc;
+mod null;
+mod sda2;
 mod shm;
-pub mod tty;
-pub mod zero;
+mod tty;
+mod zero;
 
+use alloc::rc::Weak;
 pub use misc::*;
 pub use null::*;
 pub use sda2::*;
@@ -13,26 +14,22 @@ pub use tty::*;
 pub use zero::*;
 
 use alloc::vec::Vec;
-use spin::Mutex;
-
 use path::AbsolutePath;
-
-use crate::fs::FSIDHandle;
-use crate::syscall::impls::Errno;
+use spin::Mutex;
 
 use super::Dirent;
 use super::KFile;
 use crate::fs::fsid_alloc;
-
-use crate::fs::VFS;
-
 use crate::fs::CreateMode;
+use crate::fs::FSIDHandle;
 use crate::fs::File;
-
 use crate::fs::FileType;
 use crate::fs::Kstat;
 use crate::fs::OpenFlags;
 use crate::fs::S_IFDIR;
+use crate::fs::VFS;
+use crate::syscall::impls::Errno;
+
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
@@ -41,8 +38,7 @@ use alloc::sync::Arc;
 #[derive(Debug)]
 pub struct DevDir {
     index: Mutex<usize>,
-    dirents: Vec<Dirent>,
-
+    dirents: Mutex<Vec<Dirent>>,
     fid: FSIDHandle,
 }
 
@@ -55,14 +51,14 @@ impl DevDir {
     pub fn new() -> Self {
         Self {
             index: Mutex::new(0),
-            dirents: vec![
+            dirents: Mutex::new(vec![
                 Dirent::new("sda2", 0, 0, FileType::BlockDevice),
                 Dirent::new("pts", 0, 0, FileType::CharDevice),
                 Dirent::new("null", 0, 0, FileType::CharDevice),
                 Dirent::new("zero", 0, 0, FileType::CharDevice),
                 Dirent::new("misc", 0, 0, FileType::Directory),
                 Dirent::new("shm", 0, 0, FileType::Directory),
-            ],
+            ]),
 
             fid: fsid_alloc(),
         }
@@ -75,10 +71,26 @@ impl DevDir {
     pub fn step(&self) {
         *self.index.lock() += 1;
     }
+
+    pub fn add_dirent(&self, dirent: Dirent) {
+        self.dirents.lock().push(dirent);
+    }
+
+    pub fn remove_dirent(&self, name: &str) -> Result<(), Errno> {
+        let mut index = 0;
+        let mut lock = self.dirents.lock();
+        for dirent in lock.iter() {
+            if dirent.name() == name.to_string() {
+                lock.remove(index);
+                return Ok(());
+            }
+            index += 1;
+        }
+        Err(Errno::ENOENT)
+    }
 }
 
 impl File for DevDir {
-    // TODO 待完善
     fn fstat(&self, kstat: &mut Kstat) {
         let st_size = 0;
         let st_blksize = 0;
@@ -99,13 +111,8 @@ impl File for DevDir {
 
     fn ls_with_attr(&self) -> Vec<(String, u32)> {
         let mut vec = Vec::new();
-        // vec.push(("sda2".to_string(), S_IFBLK));
-        // vec.push(("pts".to_string(), S_IFCHR));
-        // vec.push(("null".to_string(), S_IFCHR));
-        // vec.push(("zero".to_string(), S_IFCHR));
-        // vec.push(("misc".to_string(), S_IFDIR));
-
-        for dirent in self.dirents.iter() {
+        let dirents = self.dirents.lock();
+        for dirent in dirents.iter() {
             vec.push(dirent.info());
         }
         vec
@@ -115,23 +122,11 @@ impl File for DevDir {
         true
     }
 
-    // fn all_dirents(&self) -> Option<Vec<Dirent>> {
-    //     let mut dirents = Vec::new();
-
-    //     // dirents.push(Dirent::new("pts", 0, 0, FileType::CharDevice));
-    //     // dirents.push(Dirent::new("null", 0, 0, FileType::CharDevice));
-    //     // dirents.push(Dirent::new("zero", 0, 0, FileType::CharDevice));
-    //     // dirents.push(Dirent::new("misc", 0, 0, FileType::Directory));
-
-    //     dirents = self.dirents.clone();
-
-    //     Some(dirents)
-    // }
-
     fn dirent(&self, dirent: &mut Dirent) -> isize {
         let index = self.index();
-        if index < self.dirents.len() {
-            *dirent = self.dirents[index].clone();
+        let dirents = self.dirents.lock();
+        if index < dirents.len() {
+            *dirent = dirents[index].clone();
             self.step();
             core::mem::size_of::<Dirent>() as isize
         } else {
@@ -147,17 +142,37 @@ impl File for DevDir {
     ) -> Result<Arc<dyn File>, Errno> {
         match path.name().as_str() {
             "/" => Ok(Arc::new(DevDir::new())),
-            "vda2" | "sda2" => Ok(Arc::new(SDA2::new())),
-            "tty" | "pts" => Ok(Arc::new(TTY::new())),
-            "null" => Ok(Arc::new(Null::new())),
-            "zero" => Ok(Arc::new(Zero::new())),
-            "shm" => Ok(Arc::new(ShmDir::new())),
-            "misc" => Ok(Arc::new(MiscDir::new())),
-            _ => Ok(Arc::new(DevFile::new(
-                Arc::new(_DevFile::new()),
+            "vda2" | "sda2" => Ok(Arc::new(SDA2::new(
+                Arc::new(SDA2Inner::new()),
                 path,
                 open_flags,
             ))),
+            "tty" | "pts" => Ok(Arc::new(TTY::new(
+                Arc::new(TTYInner::new()),
+                path,
+                open_flags,
+            ))),
+            "null" => Ok(Arc::new(Null::new(
+                Arc::new(NullInner::new()),
+                path,
+                open_flags,
+            ))),
+            "zero" => Ok(Arc::new(Zero::new(
+                Arc::new(ZeroInner::new()),
+                path,
+                open_flags,
+            ))),
+            "shm" => Ok(Arc::new(ShmDir::new())),
+            "misc" => Ok(Arc::new(MiscDir::new())),
+            _ => {
+                let dirent = Dirent::new(path.name().as_str(), 0, 0, FileType::UNKNOWN);
+                self.add_dirent(dirent);
+                Ok(Arc::new(DevFile::new(
+                    Arc::new(DevFileInner::new()),
+                    path,
+                    open_flags,
+                )))
+            }
         }
     }
 
@@ -195,16 +210,16 @@ impl VFS for DevFS {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct _DevFile;
+#[derive(Debug)]
+pub struct DevFileInner {}
 
-impl _DevFile {
+impl DevFileInner {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-pub type DevFile = KFile<_DevFile>;
+pub type DevFile = KFile<DevFileInner>;
 
 impl File for DevFile {
     fn name(&self) -> String {

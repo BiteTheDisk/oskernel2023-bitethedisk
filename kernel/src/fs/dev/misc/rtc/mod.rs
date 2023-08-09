@@ -1,19 +1,18 @@
-use crate::fs::fino_alloc;
 use crate::fs::DeviceFile;
-use crate::fs::FInoHandle;
+use crate::fs::KFile;
 
 use alloc::string::String;
 use alloc::string::ToString;
 
 use crate::fs::File;
 #[derive(Debug)]
-pub struct Rtc {
-    pub fid: FInoHandle,
-}
+pub struct RtcInner;
 
-impl Rtc {
+pub type Rtc = KFile<RtcInner>;
+
+impl RtcInner {
     pub fn new() -> Self {
-        Self { fid: fino_alloc() }
+        Self {}
     }
 }
 
@@ -25,6 +24,6 @@ impl File for Rtc {
     }
 
     fn ino(&self) -> usize {
-        self.fid.get()
+        self.inner.lock().fid.get()
     }
 }

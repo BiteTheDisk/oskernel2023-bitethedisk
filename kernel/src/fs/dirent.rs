@@ -105,7 +105,7 @@ impl Dirent {
         self.d_name[len] = 0;
     }
 
-    fn name(&self) -> String {
+    pub fn name(&self) -> String {
         let mut len = 0;
         while len < NAME_LIMIT && self.d_name[len] != 0 {
             len += 1;
