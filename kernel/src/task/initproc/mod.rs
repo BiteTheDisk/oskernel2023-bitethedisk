@@ -29,7 +29,7 @@ lazy_static! {
         let path = AbsolutePath::from_str("/initproc");
 
         let  inode = fs::open(path, OpenFlags::O_CREATE, CreateMode::empty()).expect("initproc create failed!");
-        inode.write_all(&initproc.to_owned());
+        inode.write(&initproc.to_owned());
 
         let task = TaskControlBlock::new(inode.clone());
         inode.delete(); // 删除 initproc 文件
@@ -49,7 +49,7 @@ lazy_static! {
         let path = AbsolutePath::from_str("/static-busybox");
 
         let inode = fs::open(path, OpenFlags::O_CREATE, CreateMode::empty()).expect("static-busybox create failed");
-        inode.write_all(&busybox.to_owned());
+        inode.write(&busybox.to_owned());
 
         let task = Arc::new(TaskControlBlock::new(inode.clone()));
         inode.delete();

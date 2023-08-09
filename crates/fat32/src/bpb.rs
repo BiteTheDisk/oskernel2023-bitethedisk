@@ -208,6 +208,11 @@ impl BIOSParameterBlock {
     pub fn fat_info_sector(&self) -> usize {
         self.bpb32.fs_info as usize
     }
+
+    #[inline(always)]
+    pub fn total_cluster_cnt(&self) -> usize {
+        self.basic_bpb.tot_sec32 as usize / self.basic_bpb.sec_per_clus as usize
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1,23 +1,27 @@
-use super::file::File;
-use crate::mm::UserBuffer;
-use alloc::{
-    sync::{Arc, Weak},
-    vec::Vec,
-};
+use alloc::sync::{Arc, Weak};
 use spin::Mutex;
 
+use crate::fs::File;
+use crate::mm::UserBuffer;
 use crate::task::suspend_current_and_run_next;
+use alloc::{string::String, string::ToString, vec::Vec};
+
+use super::{fino_alloc, FInoHandle};
 
 pub struct Pipe {
     readable: bool,
     writable: bool,
     buffer: Arc<Mutex<PipeRingBuffer>>,
+
+    fid: FInoHandle,
 }
 
 impl Pipe {
     /// 创建管道的读端
     pub fn read_end_with_buffer(buffer: Arc<Mutex<PipeRingBuffer>>) -> Self {
         Self {
+            fid: fino_alloc(),
+
             readable: true,
             writable: false,
             buffer,
@@ -26,11 +30,27 @@ impl Pipe {
     /// 创建管道的写端
     pub fn write_end_with_buffer(buffer: Arc<Mutex<PipeRingBuffer>>) -> Self {
         Self {
+            fid: fino_alloc(),
+
             readable: false,
             writable: true,
             buffer,
         }
     }
+
+    // /// 是否可读
+    // fn r_ready(&self) -> bool {
+    //     let ring_buffer = self.buffer.lock();
+    //     let loop_read = ring_buffer.available_read();
+    //     loop_read > 0
+    // }
+
+    // /// 是否可写
+    // fn w_ready(&self) -> bool {
+    //     let ring_buffer = self.buffer.lock();
+    //     let loop_write = ring_buffer.available_write();
+    //     loop_write > 0
+    // }
 }
 
 /// 管道缓冲区状态
@@ -48,8 +68,8 @@ const RING_BUFFER_SIZE: usize = 4096;
 /// |--|--|
 /// |`arr`|缓冲区内存块|
 /// |`head`|队列头, 读|
-/// |`tail`|队列尾, 写|
-/// |`status`|队列状态|
+/// |`tail`|队列尾, 写(尾元素的下一个)|
+/// |`status`|队列状态(使用标志位标记缓冲区满或空)|
 /// |`write_end`|保存了它的写端的一个弱引用计数, <br>在需要确认该管道所有的写端是否都已经被关闭时, <br>通过这个字段很容易确认这一点|
 pub struct PipeRingBuffer {
     arr: [u8; RING_BUFFER_SIZE],
@@ -129,14 +149,16 @@ impl File for Pipe {
     fn readable(&self) -> bool {
         self.readable
     }
+
     fn writable(&self) -> bool {
         self.writable
     }
+
     fn available(&self) -> bool {
         true
     }
-    fn read(&self, buf: UserBuffer) -> usize {
-        time_trace!("pipe_read");
+
+    fn read_to_buf(&self, buf: UserBuffer) -> usize {
         assert_eq!(self.readable(), true);
         let mut buf_iter = buf.into_iter();
         let mut read_size = 0usize;
@@ -167,7 +189,8 @@ impl File for Pipe {
             return read_size;
         }
     }
-    fn write(&self, buf: UserBuffer) -> usize {
+
+    fn write_from_buf(&self, buf: UserBuffer) -> usize {
         assert_eq!(self.writable(), true);
         let mut buf_iter = buf.into_iter();
         let mut write_size = 0usize;
@@ -193,19 +216,15 @@ impl File for Pipe {
         }
     }
 
-    fn name(&self) -> &str {
-        "pipe"
+    fn name(&self) -> String {
+        "pipe".to_string()
     }
 
     fn offset(&self) -> usize {
         return 0;
     }
 
-    fn set_offset(&self, _offset: usize) {
-        return;
-    }
-
-    fn read_kernel_space(&self) -> Vec<u8> {
+    fn read_all(&self) -> Vec<u8> {
         assert_eq!(self.readable(), true);
         let mut buf: Vec<u8> = Vec::new();
         loop {
@@ -227,7 +246,8 @@ impl File for Pipe {
             return buf;
         }
     }
-    fn write_kernel_space(&self, data: Vec<u8>) -> usize {
+
+    fn write(&self, data: &Vec<u8>) -> usize {
         assert_eq!(self.writable(), true);
         let mut data_iter = data.into_iter();
         let mut write_size = 0usize;
@@ -243,7 +263,7 @@ impl File for Pipe {
             }
             for _ in 0..loop_write {
                 if let Some(data_ref) = data_iter.next() {
-                    ring_buffer.write_byte(data_ref);
+                    ring_buffer.write_byte(data_ref.clone());
                     write_size += 1;
                 } else {
                     return write_size;
@@ -256,25 +276,31 @@ impl File for Pipe {
         core::usize::MAX
     }
 
-    fn r_ready(&self) -> bool {
-        let ring_buffer = self.buffer.lock();
-        let loop_read = ring_buffer.available_read();
-        loop_read > 0
-    }
-
-    fn w_ready(&self) -> bool {
-        let ring_buffer = self.buffer.lock();
-        let loop_write = ring_buffer.available_write();
-        loop_write > 0
+    fn ino(&self) -> usize {
+        self.fid.get()
     }
 
     fn fstat(&self, _kstat: &mut super::Kstat) {
-        // TODO: 是否要实现
+        // TODO: 是否要实现 lzm
     }
 
     fn set_cloexec(&self) {
         let pipe = unsafe { (self as *const _ as *mut Self).as_mut().unwrap() };
         pipe.readable = false;
         pipe.writable = false;
+    }
+
+    /// 是否可读
+    fn r_ready(&self) -> bool {
+        let ring_buffer = self.buffer.lock();
+        let loop_read = ring_buffer.available_read();
+        loop_read > 0
+    }
+
+    /// 是否可写
+    fn w_ready(&self) -> bool {
+        let ring_buffer = self.buffer.lock();
+        let loop_write = ring_buffer.available_write();
+        loop_write > 0
     }
 }

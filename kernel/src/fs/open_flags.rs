@@ -1,24 +1,23 @@
 // 定义一份打开文件的标志
 bitflags! {
-    #[derive(Debug)]
+    #[derive(Debug, Clone, Copy)]
     pub struct OpenFlags: u32 {
-    // TODO do not use 0
-        const O_RDONLY    = 0;
-        const O_WRONLY    = 1 << 0;
-        const O_RDWR      = 1 << 1;
-        const O_CREATE    = 1 << 6;
-        const O_EXCL      = 1 << 7;
-        const O_TRUNC     = 1 << 9;
-        const O_APPEND    = 1 << 10;
-        const O_NONBLOCK  = 1 << 11;
-        const O_LARGEFILE = 1 << 15;
-        const O_DIRECTROY = 1 << 16;
-        const O_NOFOLLOW  = 1 << 17;
-        const O_CLOEXEC   = 1 << 19;
+        const O_RDONLY    = 0;       // 只读
+        const O_WRONLY    = 1 << 0;  // 只写
+        const O_RDWR      = 1 << 1;  // 读写
+        const O_CREATE    = 1 << 6;  // 创建
+        const O_EXCL      = 1 << 7;  // 排他
+        const O_TRUNC     = 1 << 9;  // 截断
+        const O_APPEND    = 1 << 10; // 追加
+        const O_NONBLOCK  = 1 << 11; // 非阻塞
+        const O_LARGEFILE = 1 << 15; // 大文件
+        const O_DIRECTROY = 1 << 16; // 目录
+        const O_NOFOLLOW  = 1 << 17; // 不跟随
+        const O_CLOEXEC   = 1 << 19; // 关闭执行
     }
 
     /// 用户组读写权限
-    #[derive(Debug)]
+    #[derive(Debug, Clone, Copy)]
     pub struct CreateMode: u32 {
         const S_ISUID  = 0o4000;
         const S_ISGID  = 0o2000;
@@ -42,13 +41,11 @@ bitflags! {
 }
 
 impl OpenFlags {
-    pub fn read_write(&self) -> (bool, bool) {
-        if self.is_empty() {
-            (true, false)
-        } else if self.contains(Self::O_WRONLY) {
-            (false, true)
-        } else {
-            (true, true)
-        }
+    pub fn is_readable(&self) -> bool {
+        self.contains(Self::O_RDONLY) || self.contains(Self::O_RDWR)
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.contains(Self::O_WRONLY) || self.contains(Self::O_RDWR)
     }
 }

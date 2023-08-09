@@ -1,10 +1,16 @@
 //! 文件相关的系统调用
 
 use super::super::errno::*;
+use crate::consts::FD_LIMIT;
+use crate::fs::mount;
+use crate::fs::umount2;
 use crate::fs::CreateMode;
 use crate::fs::FdSet;
-use crate::fs::{chdir, make_pipe, open, Dirent, File, Kstat, OpenFlags, Stdin, MNT_TABLE};
-use crate::fs::{Statfs, TimeInfo};
+use crate::fs::RootFS;
+use crate::fs::Statfs;
+use crate::fs::TimeInfo;
+use crate::fs::ROOT_FS;
+use crate::fs::{chdir, make_pipe, open, Dirent, File, Kstat, OpenFlags, Stdin};
 use crate::mm::{
     translated_bytes_buffer, translated_mut, translated_ref, translated_str, UserBuffer, VirtAddr,
 };
@@ -371,7 +377,7 @@ pub fn sys_getdents64(fd: isize, buf: *mut u8, len: usize) -> Result {
     let work_path = inner.cwd.clone();
     let buf_vec = translated_bytes_buffer(token, buf, len);
     let mut userbuf = UserBuffer::wrap(buf_vec);
-    let mut dirent = Dirent::new();
+    let mut dirent = Dirent::empty();
     let dent_len = size_of::<Dirent>();
     let mut total_len: usize = 0;
     let fd_table = task.fd_table.read();
@@ -475,7 +481,7 @@ pub fn sys_read(fd: usize, buf: *const u8, len: usize) -> Result {
         }
         let len = len.min(file_size - file_offset);
         let readsize =
-            file.read(UserBuffer::wrap(translated_bytes_buffer(token, buf, len))) as isize;
+            file.read_to_buf(UserBuffer::wrap(translated_bytes_buffer(token, buf, len))) as isize;
         Ok(readsize as isize)
     } else {
         return_errno!(Errno::EBADF, "fd is not exist, fd: {}", fd);
@@ -586,8 +592,9 @@ pub fn sys_write(fd: i32, buf: *const u8, len: usize) -> Result {
         drop(fd_table);
         drop(memory_set);
 
-        let write_size =
-            file.write(UserBuffer::wrap(translated_bytes_buffer(token, buf, len))) as isize;
+        let write_size = file
+            .write_from_buf(UserBuffer::wrap(translated_bytes_buffer(token, buf, len)))
+            as isize;
         Ok(write_size)
     } else {
         return_errno!(Errno::EBADF, "fd is not found, fd: {}", fd);
@@ -790,10 +797,9 @@ pub fn sys_umount2(p_special: *const u8, flags: usize) -> Result {
     let token = current_user_token();
     let special = translated_str(token, p_special);
 
-    match MNT_TABLE.lock().umount(special, flags as u32) {
+    match umount2(special, flags as u32) {
         0 => Ok(0),
         -1 => return_errno!(Errno::EINVAL),
-
         _ => unreachable!(),
     }
 }
@@ -830,7 +836,7 @@ pub fn sys_mount(
 
     _ = data;
 
-    match MNT_TABLE.lock().mount(special, dir, fstype, flags as u32) {
+    match mount(special, dir, fstype, flags as u32) {
         0 => Ok(0),
         -1 => return_errno!(Errno::EMFILE, "mount too many"),
         _ => unreachable!(),
@@ -884,7 +890,7 @@ pub fn sys_fstat(fd: i32, buf: *mut u8) -> Result {
     let fd_table = task.fd_table.read();
 
     let mut userbuf = UserBuffer::wrap(buf_vec);
-    let mut kstat = Kstat::new();
+    let mut kstat = Kstat::empty();
     let fd_limit = task.inner_ref().rlimit_nofile.rlim_cur;
     let dirfd = fd as usize;
     if dirfd >= fd_table.len() {
@@ -900,6 +906,7 @@ pub fn sys_fstat(fd: i32, buf: *mut u8) -> Result {
     }
     if let Some(file) = &fd_table[dirfd] {
         file.fstat(&mut kstat);
+        // TODO lzm
         if file.name() == "libc.so" || file.name() == "LIBC.SO" {
             kstat.st_ino = 173;
         } else if file.name() == "dlopen_dso.so" || file.name() == "DLOPEN_DSO.SO" {
@@ -948,7 +955,7 @@ pub fn sys_readv(fd: usize, iovp: *const usize, iovcnt: usize) -> Result {
 
             let len = iov.iov_len.min(file_size - file_offset - total_read_len);
             // println!("[DEBUG] sys_readv iov_addr:{:x?} len:{:?},buffer_len:{:?}",iov.iov_base,iov.iov_len,len);
-            total_read_len += file.read(UserBuffer::wrap(translated_bytes_buffer(
+            total_read_len += file.read_to_buf(UserBuffer::wrap(translated_bytes_buffer(
                 token,
                 iov.iov_base as *const u8,
                 len,
@@ -992,7 +999,7 @@ pub fn sys_writev(fd: usize, iovp: *const usize, iovcnt: usize) -> Result {
                 addr += size_of::<Iovec>();
                 continue;
             }
-            total_write_len += file.write(UserBuffer::wrap(translated_bytes_buffer(
+            total_write_len += file.write_from_buf(UserBuffer::wrap(translated_bytes_buffer(
                 token,
                 iov.iov_base as *const u8,
                 iov.iov_len,
@@ -1151,7 +1158,7 @@ pub fn sys_newfstatat(
 
     let buf_vec = translated_bytes_buffer(token, satabuf as *const u8, size_of::<Kstat>());
     let mut userbuf = UserBuffer::wrap(buf_vec);
-    let mut kstat = Kstat::new();
+    let mut kstat = Kstat::empty();
     let fd_limit = inner.rlimit_nofile.rlim_cur;
     // 相对路径, 在当前工作目录
     if dirfd == AT_FDCWD {
@@ -1197,13 +1204,14 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset: usize, _count: usize) -> Re
         let in_file = fd_table[in_fd as usize].as_ref().unwrap();
         let out_file = fd_table[out_fd as usize].as_ref().unwrap();
         let mut data_buffer;
+        // TODO lzm
         loop {
-            data_buffer = in_file.read_kernel_space();
+            data_buffer = in_file.read_all();
             let len = data_buffer.len();
             if len == 0 {
                 break;
             } else {
-                out_file.write_kernel_space(data_buffer);
+                out_file.write(&data_buffer);
                 total_write_size += len;
             }
         }
@@ -1363,7 +1371,7 @@ pub fn sys_lseek(fd: usize, off_t: isize, whence: usize) -> Result {
                 if off_t < 0 {
                     return_errno!(Errno::EINVAL, "offset is negtive");
                 }
-                file.set_offset(off_t as usize);
+                file.seek(off_t as usize);
                 Ok(off_t as isize)
             }
             SeekFlags::SEEK_CUR => {
@@ -1372,7 +1380,7 @@ pub fn sys_lseek(fd: usize, off_t: isize, whence: usize) -> Result {
                     return_errno!(Errno::EINVAL, "new offset is negtive");
                 }
 
-                file.set_offset((off_t + current_offset) as usize);
+                file.seek((off_t + current_offset) as usize);
                 Ok((off_t + current_offset) as isize)
             }
             SeekFlags::SEEK_END => {
@@ -1381,7 +1389,7 @@ pub fn sys_lseek(fd: usize, off_t: isize, whence: usize) -> Result {
                     return_errno!(Errno::EINVAL, "new offset is negtive");
                 }
 
-                file.set_offset((end + off_t) as usize);
+                file.seek((end + off_t) as usize);
                 Ok((end + off_t) as isize)
             }
             // flag wrong
@@ -1497,7 +1505,7 @@ pub fn sys_pselect6(
         if readfds as usize != 0 && !r_all_ready {
             for i in 0..rfd_vec.len() {
                 let fd = rfd_vec[i];
-                if fd >= nfds || fd == 1024 {
+                if fd >= nfds || fd == FD_LIMIT {
                     continue;
                 }
 
@@ -1603,6 +1611,8 @@ pub fn sys_pselect6(
 pub fn sys_statfs(path: *const u8, buf: *const u8) -> Result {
     let token = current_user_token();
     let mut userbuf = UserBuffer::wrap(translated_bytes_buffer(token, buf, size_of::<Statfs>()));
+    // let statfs = ROOT_FS.lock().statfs();
+    // userbuf.write(statfs.as_bytes());
     userbuf.write(Statfs::new().as_bytes());
     Ok(0)
 }

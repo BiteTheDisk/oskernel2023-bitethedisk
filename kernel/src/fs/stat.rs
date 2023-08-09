@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use crate::timer::get_time;
+use super::FSType;
 
 pub const S_IFDIR: u32 = 0o0040000;
 pub const S_IFCHR: u32 = 0o0020000;
@@ -11,26 +11,26 @@ pub const S_IFLNK: u32 = 0o0120000;
 pub const S_IFSOCK: u32 = 0o0140000;
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Kstat {
-    st_dev: u64,     // 包含文件的设备 ID
-    pub st_ino: u64, // 索引节点号
-    st_mode: u32,    // 文件类型和模式
-    st_nlink: u32,   // 硬链接数
-    st_uid: u32,     // 所有者的用户 ID
-    st_gid: u32,     // 所有者的组 ID
-    st_rdev: u64,    // 设备 ID(如果是特殊文件)
+    pub st_dev: u64,   // 包含文件的设备 ID
+    pub st_ino: u64,   // 索引节点号
+    pub st_mode: u32,  // 文件类型和模式
+    pub st_nlink: u32, // 硬链接数
+    pub st_uid: u32,   // 所有者的用户 ID
+    pub st_gid: u32,   // 所有者的组 ID
+    pub st_rdev: u64,  // 设备 ID(如果是特殊文件)
     __pad: u64,
-    st_size: i64,    // 总大小, 以字节为单位
-    st_blksize: i32, // 文件系统 I/O 的块大小
+    pub st_size: i64,    // 总大小, 以字节为单位
+    pub st_blksize: i32, // 文件系统 I/O 的块大小
     __pad2: i32,
-    st_blocks: u64,     // 分配的 512B 块数
-    st_atime_sec: i64,  // 上次访问时间
-    st_atime_nsec: i64, // 上次访问时间(纳秒精度)
-    st_mtime_sec: i64,  // 上次修改时间
-    st_mtime_nsec: i64, // 上次修改时间(纳秒精度)
-    st_ctime_sec: i64,  // 上次状态变化的时间
-    st_ctime_nsec: i64, // 上次状态变化的时间(纳秒精度)
+    pub st_blocks: u64,     // 分配的 512B 块数
+    pub st_atime_sec: i64,  // 上次访问时间
+    pub st_atime_nsec: i64, // 上次访问时间(纳秒精度)
+    pub st_mtime_sec: i64,  // 上次修改时间
+    pub st_mtime_nsec: i64, // 上次修改时间(纳秒精度)
+    pub st_ctime_sec: i64,  // 上次状态变化的时间
+    pub st_ctime_nsec: i64, // 上次状态变化的时间(纳秒精度)
     __unused: [u32; 2],
 }
 
@@ -52,7 +52,7 @@ impl TimeInfo {
 }
 
 impl Kstat {
-    pub fn new() -> Self {
+    pub fn empty() -> Self {
         Self {
             st_dev: 0,
             st_ino: 0 as u64,
@@ -75,19 +75,19 @@ impl Kstat {
             __unused: [0; 2],
         }
     }
-
     pub fn init(
         &mut self,
         st_size: i64,
         st_blksize: i32,
         st_blocks: u64,
         st_mode: u32,
+        st_ino: u64,
         st_atime_sec: i64,
         st_mtime_sec: i64,
         st_ctime_sec: i64,
     ) {
         self.st_nlink = 1;
-        self.st_ino = ino_alloc();
+        self.st_ino = st_ino;
         self.st_size = st_size;
         self.st_blksize = st_blksize;
         self.st_blocks = st_blocks;
@@ -96,7 +96,6 @@ impl Kstat {
         self.st_mtime_sec = st_mtime_sec;
         self.st_ctime_sec = st_ctime_sec;
     }
-
     pub fn as_bytes(&self) -> &[u8] {
         let size = core::mem::size_of::<Self>();
         unsafe { core::slice::from_raw_parts(self as *const _ as usize as *const u8, size) }
@@ -104,19 +103,20 @@ impl Kstat {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Statfs {
-    f_type: u64,
-    f_bsize: u64,
-    f_blocks: u64,
-    f_bfree: u64,
-    f_bavail: u64,
-    f_files: u64,
-    f_ffree: u64,
-    f_fsid: u64,
-    f_namelen: u64,
-    f_frsize: u64,
-    f_flag: u64,
-    f_spare: [u64; 4],
+    pub f_type: u64,
+    pub f_bsize: u64,
+    pub f_blocks: u64,
+    pub f_bfree: u64,
+    pub f_bavail: u64,
+    pub f_files: u64,
+    pub f_ffree: u64,
+    pub f_fsid: u64,
+    pub f_namelen: u64,
+    pub f_frsize: u64,
+    pub f_flag: u64,
+    pub f_spare: [u64; 4],
 }
 
 impl Statfs {
@@ -142,12 +142,12 @@ impl Statfs {
     }
 }
 
+// TODO 替换 timeinfo
 pub struct InodeTime {
     create_time: u64,
     access_time: u64,
     modify_time: u64,
 }
-#[allow(unused)]
 impl InodeTime {
     /// Set the inode time's create time.
     pub fn set_create_time(&mut self, create_time: u64) {
@@ -178,39 +178,4 @@ impl InodeTime {
     pub fn modify_time(&self) -> &u64 {
         &self.modify_time
     }
-}
-
-use sync_cell::SyncRefCell;
-
-static INO_ALLOCATOR: SyncRefCell<Allocator> = SyncRefCell::new(Allocator::new());
-
-/// 栈式进程标识符分配器
-struct Allocator {
-    current: u64,
-}
-
-// Only increase, never decrease.
-pub struct InoHandle(pub usize);
-
-impl Allocator {
-    /// 返回一个初始化好的进程标识符分配器
-    pub const fn new() -> Self {
-        Allocator { current: 0 }
-    }
-
-    fn fetch_add(&mut self) -> u64 {
-        let id = self.current;
-        self.current += 1;
-        id
-    }
-
-    /// 分配一个进程标识符
-    pub fn alloc(&mut self) -> u64 {
-        self.fetch_add()
-    }
-}
-
-/// 从全局栈式进程标识符分配器 `PID_ALLOCATOR` 分配一个进程标识符
-pub fn ino_alloc() -> u64 {
-    INO_ALLOCATOR.borrow_mut().alloc()
 }
