@@ -16,18 +16,18 @@ pub struct FilePage {
 }
 
 #[derive(PartialEq, Clone, Copy)]
-enum DataState {
+pub enum DataState {
     Dirty,
     Load,
     Unload,
 }
 pub struct FilePageInfo {
     /// Start offset of this page at its related file
-    file_offset: usize,
+    pub file_offset: usize,
     /// Data block state
-    data_states: [DataState; PAGE_SIZE / BLOCK_SIZE],
     /// Inode that this page related to
     inode: Weak<dyn File>,
+    pub data_states: [DataState; PAGE_SIZE / BLOCK_SIZE],
 }
 
 impl FilePage {
@@ -86,42 +86,6 @@ impl FilePage {
             self.data_frame.ppn.as_bytes_array()[offset..end].copy_from_slice(buf);
             Ok(end - offset)
         }
-    }
-
-    /// Sync all buffers if needed
-    pub fn sync(&self) -> Result<(), Errno> {
-        let file_info = self.file_info.as_ref().unwrap().lock();
-        let inode = file_info.inode.upgrade().ok_or(Errno::EBADF)?;
-        // let file_size = inode.file_size();
-        // log::trace!("[Page::sync] sync page, file offset {:#x}",file_info.file_offset);
-        log::trace!(
-            "[Page::sync] sync page, file offset {:#x}",
-            file_info.file_offset
-        );
-        for idx in 0..PAGE_SIZE / BLOCK_SIZE {
-            match file_info.data_states[idx] {
-                DataState::Dirty => {
-                    let page_offset = idx * BLOCK_SIZE;
-                    let file_offset = file_info.file_offset + page_offset;
-                    // log::trace!("[Page::sync] sync block of the page, file offset {:#x}",file_offset);
-                    log::trace!(
-                        "[Page::sync] sync block of the page, file offset {:#x}",
-                        file_offset
-                    );
-                    // // In case of truncate
-                    // if file_size <= file_offset {
-                    //     // info!("[Page::sync] file has been truncated, now len {:#x}, page's file offset {:#x}", file_size, file_offset);
-                    //     return Ok(());
-                    // }
-                    let data = &self.data_frame.ppn.as_bytes_array()
-                        [page_offset..page_offset + BLOCK_SIZE]
-                        .to_vec();
-                    inode.write_from_direct(file_offset, data);
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     /// Load all buffers

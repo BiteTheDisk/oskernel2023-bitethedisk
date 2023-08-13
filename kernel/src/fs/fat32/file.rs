@@ -3,7 +3,7 @@ use crate::drivers::BLOCK_DEVICE;
 use crate::fs::{
     CreateMode, Dirent, File, Kstat, OpenFlags, PageCache, TimeInfo, S_IFCHR, S_IFDIR, S_IFREG,
 };
-use crate::mm::UserBuffer;
+use crate::mm::{DataState, FilePage, UserBuffer};
 use crate::return_errno;
 use crate::syscall::impls::Errno;
 use alloc::collections::BTreeMap;
@@ -12,27 +12,11 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use fat32::{root, Dir as FatDir, DirError, FileSystem, VirtFile, VirtFileType, ATTR_DIRECTORY};
+use fat32::{
+    root, Dir as FatDir, DirError, FileSystem, VirtFile, VirtFileType, ATTR_DIRECTORY, BLOCK_SIZE,
+};
 use path::AbsolutePath;
 use spin::{Mutex, RwLock};
-
-pub struct InodeCache(pub RwLock<BTreeMap<AbsolutePath, Arc<Fat32File>>>);
-
-pub static INODE_CACHE: InodeCache = InodeCache(RwLock::new(BTreeMap::new()));
-
-impl InodeCache {
-    pub fn get(&self, path: &AbsolutePath) -> Option<Arc<Fat32File>> {
-        self.0.read().get(path).cloned()
-    }
-
-    pub fn insert(&self, path: AbsolutePath, file: Arc<Fat32File>) {
-        self.0.write().insert(path, file);
-    }
-
-    pub fn remove(&self, path: &AbsolutePath) {
-        self.0.write().remove(path);
-    }
-}
 
 /// 表示进程中一个被打开的常规文件或目录
 pub struct Fat32File {
@@ -154,8 +138,36 @@ impl Fat32File {
         // clear old direntry
         self.delete_direntry();
     }
+    pub fn sync(&self) -> Result<(), Errno> {
+        let mut page_set: Vec<Arc<FilePage>> = Vec::new();
+        let pages = &self.page_cache.lock().as_ref().cloned().unwrap().pages;
+        for (_, page) in pages.read().iter() {
+            page_set.push(page.clone());
+        }
+        for page in page_set {
+            let file_info = page.file_info.as_ref().unwrap().lock();
+            for idx in 0..PAGE_SIZE / BLOCK_SIZE {
+                match file_info.data_states[idx] {
+                    DataState::Dirty => {
+                        let page_offset = idx * BLOCK_SIZE;
+                        let file_offset = file_info.file_offset + page_offset;
+                        let data = page.data_frame.ppn.as_bytes_array()
+                            [page_offset..page_offset + BLOCK_SIZE]
+                            .to_vec();
+                        self.write_from_direct(file_offset, &data);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
 }
-
+impl Drop for Fat32File {
+    fn drop(&mut self) {
+        self.sync();
+    }
+}
 // 这里在实例化的时候进行文件系统的打开
 lazy_static! {
     pub static ref ROOT_INODE: Arc<VirtFile> = {
@@ -204,9 +216,6 @@ pub fn open(
     _mode: CreateMode,
 ) -> Result<Arc<Fat32File>, Errno> {
     time_trace!("open");
-    if let Some(res) = INODE_CACHE.get(&path) {
-        return Ok(res.clone());
-    }
     let mut pathv = path.as_vec_str();
     let (readable, writable) = flags.read_write();
     // 创建文件
@@ -228,7 +237,6 @@ pub fn open(
                     name.to_string(),
                 ));
                 res.create_page_cache_if_needed();
-                INODE_CACHE.insert(path.clone(), res.clone());
                 Ok(res)
             }
             Err(_err) => {
@@ -254,7 +262,6 @@ pub fn open(
                                 name.to_string(),
                             ));
                             res.create_page_cache_if_needed();
-                            INODE_CACHE.insert(path.clone(), res.clone());
                             Ok(res)
                         }
                         Err(_err) => Err(Errno::UNCLEAR),
@@ -283,7 +290,6 @@ pub fn open(
                     name,
                 ));
                 res.create_page_cache_if_needed();
-                INODE_CACHE.insert(path.clone(), res.clone());
                 Ok(res)
             }
             Err(_err) => return_errno!(Errno::ENOENT, "no such file or path:{:?}", path),

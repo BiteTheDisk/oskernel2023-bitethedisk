@@ -18,7 +18,7 @@ use super::File;
 pub struct PageCache {
     inode: Option<Weak<dyn File>>,
     // page number -> page
-    pages: RwLock<BTreeMap<usize, Arc<FilePage>>>,
+    pub pages: RwLock<BTreeMap<usize, Arc<FilePage>>>,
 }
 
 impl PageCache {
@@ -57,16 +57,5 @@ impl PageCache {
             self.pages.write().insert(offset / PAGE_SIZE, page.clone());
             Ok(page)
         }
-    }
-    /// Flush all pages to disk if needed
-    pub fn sync(&self) -> Result<(), Errno> {
-        let mut page_set: Vec<Arc<FilePage>> = Vec::new();
-        for (_, page) in self.pages.read().iter() {
-            page_set.push(page.clone());
-        }
-        for page in page_set {
-            page.sync()?;
-        }
-        Ok(())
     }
 }
