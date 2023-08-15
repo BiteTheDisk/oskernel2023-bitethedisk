@@ -20,7 +20,7 @@ extern "C" {
 }
 
 lazy_static! {
-    /// 内核虚拟地址空间抽象
+    /// Abstraction of Kernel Virtual Address Space
     static ref KERNEL_VMM: Arc<Mutex<MemorySet>> = Arc::new(Mutex::new({
         let mut memory_set = MemorySet::new_bare();
         // map trampoline
@@ -51,7 +51,7 @@ lazy_static! {
             ekernel, PHYS_END, MapPermission::R | MapPermission::W, None, 0
         }
 
-        // 恒等映射 内存映射 I/O (MMIO, Memory-Mapped I/O) 地址到内核地址空间
+        // Identity Mapping of Memory-Mapped I/O (MMIO) Addresses to Kernel Address Space
         for &pair in MMIO {
             insert_kernel_vm_areas!(memory_set,
                 pair.0, pair.0+pair.1, MapPermission::R | MapPermission::W, None, 0);

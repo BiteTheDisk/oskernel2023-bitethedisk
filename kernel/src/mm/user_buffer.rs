@@ -1,8 +1,9 @@
 use alloc::vec::Vec;
-
-/// 应用地址空间中的一段缓冲区(即内存)的抽象
+/// Abstraction of a Buffer in the Application Address Space
 ///
-/// - `buffers`: 位于应用地址空间中, 内核无法直接通过用户地址空间的虚拟地址来访问, 因此需要进行封装
+/// - buffers: Located in the application address space, the kernel cannot
+///   directly access them using virtual addresses from the user address
+///   space, so they need to be encapsulated.
 #[derive(Debug)]
 pub struct UserBuffer {
     pub buffers: Vec<&'static mut [u8]>,
@@ -10,7 +11,6 @@ pub struct UserBuffer {
 
 #[allow(unused)]
 impl UserBuffer {
-    /// 使用 `buffer` 创建一个新的缓冲区实例
     pub fn empty() -> Self {
         Self {
             buffers: Vec::new(),
@@ -27,7 +27,6 @@ impl UserBuffer {
 
         total
     }
-    // 将一个Buffer的数据写入UserBuffer, 返回写入长度
     pub fn write(&mut self, buff: &[u8]) -> usize {
         let len = self.len().min(buff.len());
         let mut current = 0;
@@ -58,7 +57,6 @@ impl UserBuffer {
         }
         len
     }
-
     pub fn write_at(&mut self, offset: usize, buff: &[u8]) -> isize {
         let len = buff.len();
         if offset + len > self.len() {
@@ -93,8 +91,6 @@ impl UserBuffer {
         }
         0
     }
-
-    // 将UserBuffer的数据读入一个Buffer, 返回读取长度
     pub fn read(&self, buff: &mut [u8]) -> usize {
         let len = self.len().min(buff.len());
         let mut current = 0;

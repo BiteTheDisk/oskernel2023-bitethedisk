@@ -1,4 +1,4 @@
-//! 系统调用实现
+//! Syscall implementations
 
 pub mod dispatcher;
 pub mod errno;

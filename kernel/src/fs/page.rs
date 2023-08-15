@@ -8,7 +8,7 @@ use crate::{
     syscall::impls::Errno,
 };
 
-// 与 MmapPage 的区别在于不需要虚拟地址
+// The difference compared to MmapPage is that it does not require a virtual address.
 pub struct FilePage {
     /// Immutable page permission
     pub permission: MapPermission,
@@ -172,7 +172,7 @@ impl FilePage {
                 //     .inode
                 //     .upgrade()
                 //     .unwrap()
-                //     .read_at_direct(file_offset, BLOCK_SIZE);
+                //     .read_at_direct(file_offset, BLOCK_SIZE); // more info see `read_at_direct`
                 let mut src = vec![0u8; BLOCK_SIZE];
                 file_info
                     .inode
@@ -203,7 +203,7 @@ impl FilePage {
                 //     .inode
                 //     .upgrade()
                 //     .unwrap()
-                //     .read_at_direct(file_offset, BLOCK_SIZE);
+                //     .read_at_direct(file_offset, BLOCK_SIZE); // more info see `read_at_direct`
 
                 let mut src = vec![0u8; BLOCK_SIZE];
                 file_info

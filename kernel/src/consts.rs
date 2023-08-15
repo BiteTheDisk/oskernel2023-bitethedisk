@@ -1,22 +1,22 @@
 pub const USER_STACK_SIZE: usize = 4096 * 2048;
-pub const KERNEL_STACK_SIZE: usize = 4096 * 32; // 应用进程在内核的栈大小
+/// Stack size of an application process in the kernel.
+pub const KERNEL_STACK_SIZE: usize = 4096 * 32;
 
 pub const USER_HEAP_SIZE: usize = 4096 * 30000;
 pub const KERNEL_HEAP_SIZE: usize = 4096 * 8192; // 32M
 
 pub const PHYS_END: usize = 0x8800_0000; // 128 MiB
-                                         // pub const PHYS_END: usize = 0xa000_0000; // 512 MiB
 
-/// 页面大小: 4KiB
 pub const PAGE_SIZE: usize = 0x1000;
 
-/// 跳板虚拟内存中的起始地址, 虚拟内存最高页
+/// Starting address of the trampoline virtual memory,
+/// the highest page in the virtual memory.
 pub const TRAMPOLINE: usize = usize::MAX - PAGE_SIZE + 1;
 
-/// 用于存放信号处理函数的栈
+/// Stack used for storing signal handlers.
 pub const SIGNAL_TRAMPOLINE: usize = TRAMPOLINE - PAGE_SIZE;
 
-/// Trap 上下文在应用地址空间中的位置
+/// Location of the trap context in the application address space.
 pub const TRAP_CONTEXT_BASE: usize = SIGNAL_TRAMPOLINE - PAGE_SIZE;
 
 pub const USER_STACK_BASE: usize = 0xf000_0000;
