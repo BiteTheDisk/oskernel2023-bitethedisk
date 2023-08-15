@@ -22,7 +22,10 @@ fn main() -> isize {
         );
     } else {
         let mut exit_code = 0_i32;
+        #[cfg(feature = "static-busybox")]
         while waitpid(-1, &mut exit_code) != 2 {}
+        #[cfg(not(feature = "static-busybox"))]
+        while waitpid(-1, &mut exit_code) != 1 {}
         println!("child proc exit_code: {}", exit_code);
     }
     0
