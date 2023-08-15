@@ -118,12 +118,14 @@ pub struct Inode {
 }
 
 #[cfg(feature = "inode_drop")]
+use crate::fs::DataState;
+#[cfg(feature = "inode_drop")]
+use fat32::BLOCK_SIZE;
+#[cfg(feature = "inode_drop")]
 impl Drop for Inode {
     // Actually, all the tests create files in memory, read and write files,
     // and do not need to be written back to the file system.
     fn drop(&mut self) {
-        use crate::fs::DataState;
-        use fat32::BLOCK_SIZE;
         let mut page_set: Vec<Arc<FilePage>> = Vec::new();
         let pages = &self.page_cache.lock().as_ref().cloned().unwrap().pages;
         for (_, page) in pages.read().iter() {
