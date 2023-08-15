@@ -29,7 +29,7 @@ kernel: initproc
 
 kernel-dbg: initproc
 	@RUST_LOG=$(RUST_LOG) cargo build --release --offline \
-	#--features no_page_cache
+	# --features no_page_cache
 	# --features static_busybox
 	# --features inode_drop
 	# --features u740
